@@ -1,0 +1,22 @@
+pdfplumber==0.11.4
+python-docx==1.1.2
+pydantic==2.9.2
+# OCR fallback for scanned (image-only) PDFs: render with PyMuPDF, recognise
+# with Tesseract (the tesseract-ocr binary is installed in the Dockerfile).
+PyMuPDF==1.24.10
+pytesseract==0.3.13
+Pillow==10.4.0
+# LLM provider SDKs (used by the respective adapters in app/llm):
+anthropic==0.69.0
+openai==1.51.2
+# HTTP API for the live-workflow dashboard (app/api.py).
+fastapi==0.115.0
+uvicorn==0.30.6
+python-multipart==0.0.9
+# Auth + persistence (Sprint 1a: users, JWT + refresh, per-user jobs).
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+passlib==1.7.4
+bcrypt==4.0.1
+python-jose[cryptography]==3.3.0
+email-validator==2.2.0

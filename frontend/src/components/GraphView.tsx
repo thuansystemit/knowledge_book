@@ -1,0 +1,111 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import ForceGraph2D from 'react-force-graph-2d';
+import type { Graph, GraphNode } from '../api/jobs.api';
+
+// Node colour by knowledge-graph type (app/domain/graph_schema.py).
+const TYPE_COLORS: Record<string, string> = {
+  Concept: '#6366f1',
+  Principle: '#10b981',
+  Term: '#0ea5e9',
+  Example: '#f59e0b',
+  Person: '#f43f5e',
+  Tool: '#8b5cf6',
+};
+const DIM = '#e2e8f0';
+
+export function GraphView({ graph }: { graph: Graph }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(800);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    const measure = () => setWidth(wrapRef.current?.clientWidth ?? 800);
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  // Map our graph (nodes/edges) into the force-graph shape (nodes/links).
+  // Clone so the layout mutates its own copy, not our data.
+  const data = useMemo(
+    () => ({
+      nodes: graph.nodes.map((n) => ({ ...n })),
+      links: graph.edges.map((e) => ({ source: e.source, target: e.target, type: e.type })),
+    }),
+    [graph],
+  );
+
+  const neighbors = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    const add = (a: string, b: string) => {
+      if (!m.has(a)) m.set(a, new Set());
+      m.get(a)!.add(b);
+    };
+    for (const e of graph.edges) {
+      add(e.source, e.target);
+      add(e.target, e.source);
+    }
+    return m;
+  }, [graph]);
+
+  const active = (id: string) =>
+    !selected || id === selected || !!neighbors.get(selected)?.has(id);
+
+  const sel = selected ? graph.nodes.find((n) => n.id === selected) : null;
+
+  return (
+    <div className="graph-wrap" ref={wrapRef}>
+      <div className="legend">
+        {Object.entries(TYPE_COLORS).map(([t, c]) => (
+          <span key={t} className="legend-item">
+            <span className="dot" style={{ background: c }} /> {t}
+          </span>
+        ))}
+      </div>
+      <ForceGraph2D
+        graphData={data}
+        width={width}
+        height={520}
+        nodeRelSize={5}
+        linkColor={() => DIM}
+        linkDirectionalArrowLength={3}
+        cooldownTicks={120}
+        onNodeClick={(n: any) => setSelected(n.id === selected ? null : n.id)}
+        nodeCanvasObject={(node: any, ctx, scale) => {
+          const n = node as GraphNode & { x: number; y: number };
+          const on = active(n.id);
+          const r = 4 + (n.confidence ?? 0.5) * 4;
+          ctx.globalAlpha = on ? 1 : 0.15;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+          ctx.fillStyle = TYPE_COLORS[n.type] ?? '#64748b';
+          ctx.fill();
+          if (scale > 1.5 && on) {
+            ctx.fillStyle = '#0f172a';
+            ctx.font = `${11 / scale}px Inter, sans-serif`;
+            ctx.fillText(n.name, n.x + r + 1, n.y + 3);
+          }
+          ctx.globalAlpha = 1;
+        }}
+      />
+      {sel && (
+        <div className="node-card">
+          <div className="node-card-head">
+            <span className="dot" style={{ background: TYPE_COLORS[sel.type] ?? '#64748b' }} />
+            <strong>{sel.name}</strong>
+            <span className="node-type">{sel.type}</span>
+            <span className="node-conf">conf {sel.confidence}</span>
+          </div>
+          {sel.definition && <p className="node-def">{sel.definition}</p>}
+          {sel.source_refs?.length > 0 && (
+            <p className="node-src">
+              {sel.source_refs
+                .map((s) => `${s.chapter || '(unknown)'} p.${s.page_start}-${s.page_end}`)
+                .join(' · ')}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

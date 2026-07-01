@@ -1,0 +1,8 @@
+doc,tool,metric,value,page,timestamp
+D1,type_detect,classification,digital,,2026-06-29T12:26:59+00:00
+D1,type_detect,digital_page_fraction,0.966,,2026-06-29T12:26:59+00:00
+D1,type_detect,classification,digital,,2026-06-29T12:28:32+00:00
+D1,type_detect,digital_page_fraction,0.97,,2026-06-29T12:28:32+00:00
+D1,pymupdf,pages_extracted,352,,2026-06-29T12:28:32+00:00
+D1,heuristic,chapters_detected,8,,2026-06-29T12:28:32+00:00
+D1,heuristic,body_font_pt,10.0,,2026-06-29T12:28:32+00:00

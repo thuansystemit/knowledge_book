@@ -1,0 +1,5 @@
+# Actual PDFs may be copyrighted — keep them local, never commit.
+corpus/pdfs/
+.venv/
+__pycache__/
+*.pyc

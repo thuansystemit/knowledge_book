@@ -1,0 +1,7 @@
+# Spike harness deps — pinned for reproducibility.
+# Throwaway spike code; not production dependencies.
+PyMuPDF==1.24.10        # digital text + render-to-image + font/coord metadata
+pdfplumber==0.11.4      # table-aware comparison on D4
+pytesseract==0.3.13     # local OCR fallback (needs `tesseract` binary installed)
+Pillow==10.4.0          # image handling for OCR rendering
+# Cloud OCR SDK added once vendor is chosen on Day 0 (e.g. google-cloud-documentai / boto3).

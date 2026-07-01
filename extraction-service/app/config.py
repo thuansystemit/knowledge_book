@@ -1,0 +1,89 @@
+"""Environment-driven settings for the knowledge-graph extraction service.
+
+Mirrors the toeic_app extraction-service pattern: LLM provider/model/key are all
+.env-driven and LIVE (re-read on demand via get_settings()), so switching from
+Claude to OpenAI to a local Ollama model needs no code change or rebuild."""
+import os
+from dataclasses import dataclass, field
+
+ENV_FILE = os.environ.get("ENV_FILE", "/app/.env")
+
+
+def _load_env_file(path: str) -> None:
+    """Read a KEY=VALUE .env into os.environ. Dependency-free: skips blanks and
+    `#` comments, strips surrounding quotes. Missing file is fine."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                if key:
+                    os.environ[key] = val.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+
+
+@dataclass(frozen=True)
+class Settings:
+    # LLM provider selection + per-provider config (all live-switchable via .env).
+    # Default is the LOCAL ollama provider — no API key, runs offline. Switch to
+    # claude/openai via .env once you want cloud quality.
+    provider: str = field(default_factory=lambda: os.environ.get("LLM_PROVIDER", "ollama"))
+
+    anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
+    anthropic_model: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8"))
+
+    openai_api_key: str = field(default_factory=lambda: os.environ.get("OPENAI_API_KEY", ""))
+    openai_model: str = field(default_factory=lambda: os.environ.get("OPENAI_MODEL", "gpt-4o"))
+
+    ollama_base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", "http://192.168.100.158:11434"))
+    ollama_model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", "qwen2.5:3b"))
+
+    # Ingestion guardrails (PRD §6, §FR-0.1).
+    max_file_bytes: int = field(default_factory=lambda: int(os.environ.get("MAX_FILE_BYTES", str(100 * 1024 * 1024))))
+    max_pages: int = field(default_factory=lambda: int(os.environ.get("MAX_PAGES", "500")))
+    min_chars: int = field(default_factory=lambda: int(os.environ.get("MIN_TEXT_CHARS", "40")))
+
+    # Chunking (prose section-level; token estimate).
+    chunk_tokens: int = field(default_factory=lambda: int(os.environ.get("CHUNK_TOKENS", "1200")))
+    chunk_overlap: int = field(default_factory=lambda: int(os.environ.get("CHUNK_OVERLAP", "150")))
+    # Extra attempts per chunk when the model returns unparseable output (small
+    # local models occasionally do). 2 -> up to 3 tries before giving up.
+    chunk_retries: int = field(default_factory=lambda: int(os.environ.get("CHUNK_RETRIES", "2")))
+
+    # Outputs
+    output_dir: str = field(default_factory=lambda: os.environ.get("OUTPUT_DIR", "/out"))
+    generate_brief: bool = field(default_factory=lambda: os.environ.get("GENERATE_BRIEF", "true").lower() in ("1", "true", "yes"))
+
+    # --- Auth + persistence (Sprint 1a) -------------------------------------
+    database_url: str = field(default_factory=lambda: os.environ.get(
+        "DATABASE_URL", "postgresql+psycopg2://kb:kb@db:5432/kb"))
+    jwt_secret: str = field(default_factory=lambda: os.environ.get("JWT_SECRET", "dev-secret-change-me"))
+    access_ttl_min: int = field(default_factory=lambda: int(os.environ.get("ACCESS_TTL_MIN", "15")))
+    refresh_ttl_days: int = field(default_factory=lambda: int(os.environ.get("REFRESH_TTL_DAYS", "7")))
+    stream_token_ttl_sec: int = field(default_factory=lambda: int(os.environ.get("STREAM_TOKEN_TTL_SEC", "60")))
+    # Refresh cookie flags. Secure=false for local http; set true behind HTTPS.
+    cookie_secure: bool = field(default_factory=lambda: os.environ.get("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"))
+    cookie_samesite: str = field(default_factory=lambda: os.environ.get("COOKIE_SAMESITE", "lax"))
+    # First-admin bootstrap (only used when the users table is empty).
+    admin_email: str = field(default_factory=lambda: os.environ.get("ADMIN_EMAIL", "admin@knowledgebook.local"))
+    admin_password: str = field(default_factory=lambda: os.environ.get("ADMIN_PASSWORD", "admin12345"))
+
+    # --- Chat (graph-grounded Q&A) ------------------------------------------
+    # Which provider/model answers chat. Empty -> use the main LLM_PROVIDER/model.
+    # Lets you run extraction locally but chat on Claude, for example.
+    chat_provider: str = field(default_factory=lambda: os.environ.get("CHAT_PROVIDER", ""))
+    chat_model: str = field(default_factory=lambda: os.environ.get("CHAT_MODEL", ""))
+    chat_stream_token_ttl_sec: int = field(default_factory=lambda: int(os.environ.get("CHAT_STREAM_TOKEN_TTL_SEC", "180")))
+    # Multi-turn: how many prior messages to include as history (kept small for
+    # the local model's context window).
+    chat_history_turns: int = field(default_factory=lambda: int(os.environ.get("CHAT_HISTORY_TURNS", "8")))
+
+
+def get_settings() -> Settings:
+    """Fresh settings after re-reading the mounted .env."""
+    _load_env_file(ENV_FILE)
+    return Settings()

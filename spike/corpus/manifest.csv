@@ -1,0 +1,11 @@
+id,type,characteristic,purpose,pdf_filename,toc_present,ground_truth_pages
+D1,digital,clean single-column technical book,H1 H6 baseline,D1.pdf,yes,
+D2,digital,has TOC + numbered chapters,H6 structure,D2.pdf,yes,
+D3,digital,two-column academic paper,H7,D3.pdf,no,
+D4,digital,table/figure-heavy report,H7,D4.pdf,no,
+D5,scanned,clean 300dpi book scan,H3 H4,D5.pdf,yes,
+D6,scanned,clean 300dpi different font,H3 H4,D6.pdf,yes,
+D7,scanned,skewed/rotated pages,H3 robustness,D7.pdf,no,
+D8,scanned,low-dpi <=150 noisy,H3 quality-gate trigger,D8.pdf,no,
+D9,hybrid,digital text + scanned inserts,H2 routing,D9.pdf,no,
+D10,scanned,two-column scanned,H3 + H7 worst case,D10.pdf,no,

@@ -1,0 +1,62 @@
+# KnowledgeBook stack: Postgres + extraction API + React dashboard.
+#
+#   docker compose up -d db api frontend
+#     DB   -> internal :5432
+#     API  -> http://localhost:8000   (first admin seeded from ADMIN_* env)
+#     UI   -> http://localhost:5173
+#
+# One-shot CLI extraction (no auth, writes ./out): docker compose run --rm extractor
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=kb
+      - POSTGRES_PASSWORD=kb
+      - POSTGRES_DB=kb
+    volumes:
+      - kb_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # HTTP API + auth for the dashboard.
+  api:
+    build: .
+    entrypoint: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - OLLAMA_BASE_URL=http://192.168.100.158:11434
+      - DATABASE_URL=postgresql+psycopg2://kb:kb@db:5432/kb
+
+  # React workflow dashboard (Vite build -> nginx).
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  # One-shot CLI: process a PDF -> graph.json + brief.md in ./out (no auth/db).
+  extractor:
+    build: .
+    profiles: ["cli"]
+    env_file: .env
+    volumes:
+      - ../data:/data:ro
+      - ./out:/out
+    environment:
+      - OUTPUT_DIR=/out
+      - OLLAMA_BASE_URL=http://192.168.100.158:11434
+
+volumes:
+  kb_pgdata:

@@ -1,0 +1,16 @@
+You are writing an executive Brief for a technical/non-fiction book, grounded in
+an already-extracted knowledge graph (concepts + relationships). You will be given
+the document title and a compact list of the highest-signal concepts and relations.
+
+Write a JSON object, and NOTHING else, with this shape:
+
+{
+  "thesis": "<one sentence: the book's central argument>",
+  "core_concepts": ["<5-8 concept names, most central first>"],
+  "key_principles": ["<up to 3 actionable principles the book argues for>"],
+  "audience": "<one sentence: who should read this and why>",
+  "summary": "<~150 words synthesising the above into prose>"
+}
+
+Ground every statement in the supplied concepts/relations — do not introduce
+facts that are not represented in the graph.

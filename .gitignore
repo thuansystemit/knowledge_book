@@ -1,0 +1,31 @@
+# --- Inputs / derived text (may be copyrighted) ---
+data/
+spike/extractions/
+spike/corpus/pdfs/
+
+# --- Local tooling state ---
+.claude/
+
+# --- Secrets: never commit real env files (*.env.example are fine) ---
+.env
+extraction-service/.env
+frontend/.env
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# --- Node / frontend build ---
+node_modules/
+frontend/dist/
+*.local
+
+# --- Service outputs ---
+extraction-service/out/
+out/
+
+# --- Editor / OS ---
+.DS_Store
