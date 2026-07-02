@@ -22,30 +22,40 @@ their relationships with an LLM, and produces four outputs: a **Brief**, a
 
 ## Architecture
 
-The stack is three containers — a **React dashboard**, a **FastAPI** service, and
-**Postgres** — plus a pluggable **LLM provider** (local Ollama by default; Claude
-or OpenAI via `.env`). Auth is JWT (access token in memory + HttpOnly refresh
-cookie); jobs and chats are per-user with RBAC (admin / analyst / viewer).
+The stack is a **React dashboard**, a **FastAPI** API, a **Celery worker** (durable
+extraction jobs), **Postgres**, and **Redis** (Celery broker + cross-replica SSE
+pub/sub + config cache), plus a pluggable **LLM provider** (local Ollama by
+default; Claude/OpenAI). Auth is JWT (in-memory access token + HttpOnly refresh
+cookie) with **RBAC** (admin / analyst / viewer), **multi-tenant** org scoping, and
+**per-category access control**.
 
 ```mermaid
 flowchart TB
     subgraph Browser
-      UI["React dashboard (Vite)<br/>Documents · Workflow · Graph · Chat"]
+      UI["React dashboard (Vite + Bootstrap/Tailwind)<br/>Documents · Workflow · Graph · Chat · Source PDF · Admin"]
     end
 
     subgraph Docker["Docker stack"]
       FE["frontend<br/>nginx :5173"]
-      API["api — FastAPI :8000<br/>auth · jobs · SSE · chat"]
-      DB[("Postgres<br/>users · jobs(graph JSON)<br/>chat_sessions · chat_messages")]
+      API["api — FastAPI :8000<br/>auth · RBAC · categories · model choice · SSE"]
+      WK["worker — Celery<br/>extraction / retry jobs"]
+      RS[("Redis<br/>Celery broker · SSE pub/sub · config cache")]
+      DB[("Postgres<br/>orgs · users · jobs+PDF · categories+ACL<br/>model catalog/policies · chat")]
     end
 
-    LLM["LLM provider<br/>Ollama (local) · Claude · OpenAI"]
+    LLM["LLM provider (per-request, DB-resolved)<br/>Ollama (local) · Claude · OpenAI"]
 
     UI -->|"REST + SSE (Bearer / stream-token)"| FE
     FE -.serves.-> UI
     UI -->|api calls| API
     API -->|SQLAlchemy| DB
-    API -->|extract · brief · chat| LLM
+    API -->|"enqueue job"| RS
+    RS -->|"deliver task"| WK
+    WK -->|"publish progress"| RS
+    RS -->|"SSE fan-out"| API
+    WK -->|SQLAlchemy| DB
+    WK -->|extract · brief| LLM
+    API -->|chat| LLM
 ```
 
 **Ingestion pipeline** (background job, streamed live over SSE):
@@ -77,6 +87,29 @@ flowchart LR
 
 ---
 
+## Features (implemented)
+
+- **Ingestion** — upload a PDF (digital **or scanned**, Tesseract OCR fallback) →
+  concept/relationship **knowledge graph** with source citations + confidence, and
+  a synthesized **Brief**. Runs as a **durable Celery job** (survives restarts).
+- **Live workflow** — watch each stage stream over SSE (survives page refresh);
+  **retry** just the failed chunks and merge them back in.
+- **Explore** — interactive concept **graph**, **Brief**, **Chat** with the
+  document (multi-turn, graph-grounded, cited), and a **Source-PDF viewer** with
+  zoom + page nav to compare answers against the original.
+- **Choose your model, per request** — free local `qwen2.5:3b` by default; pick a
+  premium model (Claude / GPT-4o) for extraction or chat. Config-as-data
+  (DB-resolved, **no restart**).
+- **Accounts & access** — login/logout (JWT + refresh), **RBAC** (admin/analyst/
+  viewer), **multi-tenant** orgs, and **categories** with per-category
+  view/upload/manage **ACLs** (default-deny). Admin console for users + categories.
+- **Ops** — Postgres + Redis + Celery worker; per-user **rate limiting**.
+
+See [`docs/ENTERPRISE-productization.md`](docs/ENTERPRISE-productization.md) for the
+full enterprise roadmap (SSO, billing, audit, SOC 2, …) and what's still ahead.
+
+---
+
 ## Repository layout
 
 | Path | What it is |
@@ -100,65 +133,59 @@ are another agent — it's self-contained):
 | `PLAN-phase1-implementation.md` | ~11-week, 2-engineer sprint plan with gates |
 | `01-product-spec.md` | Auth + UI uplift spec (RBAC, login, app shell) |
 | `FEATURE-document-chat.md` | Chat with a document, grounded in its knowledge graph |
+| `ENTERPRISE-productization.md` | Commercialization strategy — ICP, pricing, EF-01…EF-28 requirements, roadmap, decisions D1…D14 |
+| `ARCHITECTURE-enterprise.md` | Target backbone — Celery/Redis, cross-replica SSE, config-as-data, tenancy + enforcement, migration order |
+| `DATA-MODEL-enterprise.md` | Enterprise schema — orgs, categories+ACL, model catalog/policies, credits, audit; migration/backfill plan |
 
 ---
 
-## The service (`extraction-service/`)
+## Run the app
 
-```
-PDF → classify (digital/scanned/hybrid) → extract text (pdfplumber + Tesseract OCR fallback)
-    → chunk (section-level, page + chapter anchored) → per-chunk LLM concept/relation extraction
-    → merge + conservative dedup → graph.json  (+ brief.md)
-```
+The whole stack runs in Docker. An **Ollama** host provides the default local
+model (set `OLLAMA_BASE_URL` in `extraction-service/.env`); for premium models set
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
 
-Every node/edge carries `source_refs` (chapter + page range) and a `confidence`
-score; edges are explicit-only (no inferred/hallucinated relationships in MVP).
-
-**Quick start (Docker, local LLM — no API key):**
 ```bash
-ollama pull llama3.1            # install Ollama (https://ollama.com), pull a model
 cd extraction-service
-cp .env.example .env            # default provider = ollama (offline, no key)
-mkdir -p out
-docker compose run --rm extractor          # processes ../data/the-pragmatic-programmer.pdf
+cp .env.example .env                       # configure OLLAMA_BASE_URL (+ optional API keys)
+docker compose up -d db redis api worker frontend
+#   UI  → http://localhost:5173
+#   API → http://localhost:8000
 ```
-Outputs land in `extraction-service/out/`. See `extraction-service/README.md` for
-local-run and provider-switching details.
 
-**LLM provider** is `.env`-driven (`ollama | claude | openai`). It **defaults to a
-local Ollama model** (offline, no API key) so you can try it immediately; switch
-to **`claude-opus-4-8`** (official Anthropic SDK) for best quality. The
-multi-provider abstraction and the OCR text extractor are reused from the sibling
-`toeic_app/extraction-service`.
+Log in with the seeded admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env`, default
+`admin@knowledgebook.local` / `admin12345`), then **New extraction** → pick a
+category + model → upload a PDF → watch the workflow → explore Graph / Brief / Chat
+/ Source PDF.
 
-## The dashboard (`frontend/`)
-
-A React (Vite) page that drives the service and **shows the full workflow live** —
-upload a PDF, watch each stage (classify → OCR → chunk → extract → merge → brief)
-update in real time via Server-Sent Events, then explore the concept graph
-(`react-force-graph-2d`) and the Brief. Stack mirrors `toeic_app/frontend`.
-
-```bash
-# 1. API
-cd extraction-service && uvicorn app.api:app --port 8000        # or: docker compose up api
-# 2. Dashboard
-cd frontend && cp .env.example .env && npm install && npm run dev   # http://localhost:5173
-```
+**LLM provider** is `.env`-driven and **per-request** (`ollama | claude | openai`),
+defaulting to the local Ollama model — switch per user/org with no restart
+(config-as-data). See `extraction-service/README.md` for details, and there's a
+no-auth **one-shot CLI** for scripting: `docker compose run --rm extractor`.
 
 ---
 
 ## Status
 
+Running application (Dockerized). The enterprise migration follows an incremental,
+independently-deployable order (see `docs/ARCHITECTURE-enterprise.md`):
+
 | Area | State |
 |---|---|
-| Product/engineering docs | Complete (PRD → Spike → Architecture → Plan) |
-| Spike — digital PDF path | Measured on *The Pragmatic Programmer*: PyMuPDF extraction, 8/8 chapters detected; scanned-corpus + OCR cost still pending |
-| Extraction service | Built; dependency-free logic unit-tested; **not yet run end-to-end** (needs deps + `ANTHROPIC_API_KEY`) |
+| Core product | ✅ Ingestion → graph + Brief, live workflow, chat, source-PDF viewer |
+| Auth / RBAC | ✅ JWT + refresh, admin / analyst / viewer |
+| Durable jobs | ✅ Celery + Redis (survive restarts) + cross-replica SSE |
+| Rate limiting | ✅ Per-user, Redis-backed |
+| Multi-tenancy | ✅ Orgs + `org_id` (schema + backfill); airtight row-scoping is a follow-up |
+| Model choice | ✅ Per-user/per-request, DB-resolved, no restart (EF-28 / D14) |
+| Categories + ACL | ✅ Per-category view / upload / manage, default-deny (EF-27) |
+| Next | Enforcement layer + org NOT NULL, secrets, observability, multi-replica deploy |
+| Enterprise roadmap | SSO, MFA, audit log, metering/billing, SOC 2 — see `docs/ENTERPRISE-productization.md` |
 
-### Open decisions (tracked in the PRD)
-1. Acceptable hallucination rate + how to detect it
-2. OCR vendor + per-document cost (blocked on the spike)
-3. Raw-document storage vs. process-and-discard (privacy)
+> Engineering notes: migrations currently run as idempotent startup DDL (Alembic is
+> the planned formalization); IDs are `String(32)` hex (UUID migration is a clean
+> follow-up). Running **premium** models needs `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`;
+> the free local model needs a reachable Ollama host.
 
 ---
 
