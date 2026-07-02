@@ -55,10 +55,10 @@ export function GraphView({ graph }: { graph: Graph }) {
 
   return (
     <div className="graph-wrap" ref={wrapRef}>
-      <div className="legend">
+      <div className="d-flex flex-wrap gap-3 mb-2 small text-secondary fw-semibold">
         {Object.entries(TYPE_COLORS).map(([t, c]) => (
-          <span key={t} className="legend-item">
-            <span className="dot" style={{ background: c }} /> {t}
+          <span key={t} className="d-inline-flex align-items-center gap-1">
+            <span className="rounded-circle d-inline-block" style={{ width: 10, height: 10, background: c }} /> {t}
           </span>
         ))}
       </div>
@@ -89,21 +89,21 @@ export function GraphView({ graph }: { graph: Graph }) {
         }}
       />
       {sel && (
-        <div className="node-card">
-          <div className="node-card-head">
-            <span className="dot" style={{ background: TYPE_COLORS[sel.type] ?? '#64748b' }} />
-            <strong>{sel.name}</strong>
-            <span className="node-type">{sel.type}</span>
-            <span className="node-conf">conf {sel.confidence}</span>
+        <div className="node-card card shadow border-0 rounded-4">
+          <div className="card-body p-3">
+            <div className="d-flex align-items-center gap-2 flex-wrap">
+              <span className="rounded-circle d-inline-block" style={{ width: 10, height: 10, background: TYPE_COLORS[sel.type] ?? '#64748b' }} />
+              <strong>{sel.name}</strong>
+              <span className="badge text-bg-light">{sel.type}</span>
+              <span className="text-secondary small ms-auto">conf {sel.confidence}</span>
+            </div>
+            {sel.definition && <p className="small text-body-secondary mb-1 mt-2">{sel.definition}</p>}
+            {sel.source_refs?.length > 0 && (
+              <p className="small text-secondary mb-0">
+                {sel.source_refs.map((s) => `${s.chapter || '(unknown)'} p.${s.page_start}-${s.page_end}`).join(' · ')}
+              </p>
+            )}
           </div>
-          {sel.definition && <p className="node-def">{sel.definition}</p>}
-          {sel.source_refs?.length > 0 && (
-            <p className="node-src">
-              {sel.source_refs
-                .map((s) => `${s.chapter || '(unknown)'} p.${s.page_start}-${s.page_end}`)
-                .join(' · ')}
-            </p>
-          )}
         </div>
       )}
     </div>

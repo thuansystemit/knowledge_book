@@ -16,10 +16,10 @@ export async function getHistory(jobId: string) {
   return data;
 }
 
-export async function ask(jobId: string, question: string) {
+export async function ask(jobId: string, question: string, model?: string) {
   const { data } = await api.post<{ message_id: string; stream_token: string }>(
     `/api/jobs/${jobId}/chat`,
-    { question },
+    { question, model },
   );
   return data;
 }

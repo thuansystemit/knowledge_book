@@ -26,14 +26,16 @@ export interface JobSummary {
 }
 export interface JobDetail {
   job_id: string; title: string; status: string; error: string | null;
-  events: StageEvent[]; graph: Graph | null;
+  events: StageEvent[]; graph: Graph | null; has_pdf?: boolean;
 }
 export interface StageEvent {
   stage: string; status: string; detail?: string; index?: number; total?: number;
 }
 
-export async function listJobs() {
-  const { data } = await api.get<JobSummary[]>('/api/jobs');
+export async function listJobs(categoryId?: string) {
+  const { data } = await api.get<JobSummary[]>('/api/jobs', {
+    params: categoryId ? { category_id: categoryId } : {},
+  });
   return data;
 }
 
@@ -42,9 +44,11 @@ export async function getJob(jobId: string) {
   return data;
 }
 
-export async function createJob(file: File) {
+export async function createJob(file: File, model?: string, categoryId?: string) {
   const form = new FormData();
   form.append('file', file);
+  if (model) form.append('model', model);
+  if (categoryId) form.append('category_id', categoryId);
   const { data } = await api.post<{ job_id: string; title: string }>('/api/jobs', form);
   return data;
 }
@@ -59,6 +63,13 @@ export async function retryFailed(jobId: string) {
 
 export async function deleteJob(jobId: string) {
   await api.delete(`/api/jobs/${jobId}`);
+}
+
+/** Fetch the stored source PDF (with auth) and return an object URL for viewing.
+ * Caller must URL.revokeObjectURL when done. */
+export async function fetchPdfObjectUrl(jobId: string): Promise<string> {
+  const res = await api.get(`/api/jobs/${jobId}/pdf`, { responseType: 'blob' });
+  return URL.createObjectURL(res.data as Blob);
 }
 
 /** Fetch a 60s stream token, then open an authenticated SSE connection. */

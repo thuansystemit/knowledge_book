@@ -16,24 +16,29 @@ MVP — multi-worker durability (Redis pub/sub) is deferred per ARCHITECTURE."""
 from __future__ import annotations
 
 import json
-import threading
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy import or_, select
 
+from app import job_events
+from app.access import general_category_id, require_category, require_job_access, visible_category_ids
 from app.admin_routes import router as admin_router
 from app.auth_routes import router as auth_router
+from app.category_routes import router as category_router
 from app.chat_routes import router as chat_router
 from app.config import get_settings
 from app.db import Base, engine, get_db, session_scope
 from app.deps import get_current_user, require_role
-from app.llm.factory import get_provider
-from app.models import Job, User
+from app.migrations import run_categories, run_models, run_tenancy
+from app.model_resolver import get_catalog, invalidate_catalog, resolve as resolve_model, system_default
+from app.models import DocumentFile, Job, OrgModelPolicy, User, UserSettings
 from app.observability import audit
+from app.ratelimit import upload_limit
 from app.security import hash_password, make_stream, safe_decode
-from app.pipeline import retry_failed, run as run_pipeline
+from app.tasks import retry_extraction, run_extraction
 
 app = FastAPI(title="KnowledgeBook Extraction API")
 
@@ -48,105 +53,36 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(chat_router)
-
-# job_id -> {"events": list, "cond": threading.Condition, "done": bool}
-# An append-only event list guarded by a condition variable. Any number of SSE
-# subscribers (including a page reload that reconnects) can replay the full
-# history from index 0 and then follow live updates — which is what makes
-# progress survive a refresh.
-LIVE: dict[str, dict] = {}
+app.include_router(category_router)
 
 
 @app.on_event("startup")
 def _startup() -> None:
     Base.metadata.create_all(engine)
-    _bootstrap_admin()
+    org_id = run_tenancy()          # org_id column + default org + backfill (EF-12)
+    run_models()                    # jobs model columns + seed catalog (EF-28)
+    _bootstrap_admin(org_id)
+    run_categories()                # categories + grants + General backfill (EF-27)
 
 
-def _bootstrap_admin() -> None:
+def _bootstrap_admin(org_id: str) -> None:
     """Seed the first admin from env vars iff the users table is empty."""
     cfg = get_settings()
     with session_scope() as db:
         if db.scalar(select(User).limit(1)) is not None:
             return
-        db.add(User(email=cfg.admin_email, password_hash=hash_password(cfg.admin_password),
+        db.add(User(org_id=org_id, email=cfg.admin_email,
+                    password_hash=hash_password(cfg.admin_password),
                     name="Administrator", role="admin"))
         audit("ADMIN_BOOTSTRAPPED", email=cfg.admin_email)
 
 
-def _run_job(job_id: str, data: bytes) -> None:
-    cfg = get_settings()
-    live = LIVE[job_id]
-    cond = live["cond"]
-
-    def on_event(ev: dict) -> None:
-        with cond:
-            live["events"].append(ev)
-            cond.notify_all()
-
-    status, graph, error = "done", None, None
-    try:
-        with session_scope() as db:
-            title = db.get(Job, job_id).title
-        provider = get_provider()
-        graph = run_pipeline(data, title, provider, cfg, on_event=on_event)
-    except Exception as e:
-        status, error = "error", str(e)
-        audit("JOB_ERROR", job=job_id, error=str(e))
-        on_event({"stage": "done", "status": "error", "detail": str(e)})
-    finally:
-        # Persist the full result so it survives a restart / cross-process reads.
-        with session_scope() as db:
-            job = db.get(Job, job_id)
-            if job:
-                job.status = status
-                job.graph = graph
-                job.events = live["events"]
-                job.error = error
-        with cond:
-            live["done"] = True
-            cond.notify_all()
-
-
-def _retry_job(job_id: str) -> None:
-    """Re-run the job's failed chunks and merge them into its existing graph."""
-    cfg = get_settings()
-    live = LIVE[job_id]
-    cond = live["cond"]
-
-    def on_event(ev: dict) -> None:
-        with cond:
-            live["events"].append(ev)
-            cond.notify_all()
-
-    status, error, new_graph = "done", None, None
-    try:
-        with session_scope() as db:
-            job = db.get(Job, job_id)
-            graph, title = job.graph, job.title
-        provider = get_provider()
-        new_graph = retry_failed(graph, title, provider, cfg, on_event=on_event)
-    except Exception as e:
-        status, error = "error", str(e)
-        audit("RETRY_ERROR", job=job_id, error=str(e))
-        on_event({"stage": "done", "status": "error", "detail": str(e)})
-    finally:
-        with session_scope() as db:
-            job = db.get(Job, job_id)
-            if job:
-                job.status = status
-                if new_graph is not None:
-                    job.graph = new_graph
-                job.events = live["events"]
-                job.error = error
-        with cond:
-            live["done"] = True
-            cond.notify_all()
-
-
 @app.post("/api/jobs")
 async def create_job(file: UploadFile,
+                     model: str | None = Form(default=None),
+                     category_id: str | None = Form(default=None),
                      user: User = Depends(require_role("admin", "analyst")),
+                     _rl: None = Depends(upload_limit),
                      db=Depends(get_db)):
     cfg = get_settings()
     data = await file.read()
@@ -154,20 +90,37 @@ async def create_job(file: UploadFile,
         raise HTTPException(413, f"file too large (> {cfg.max_file_bytes} bytes)")
     title = (file.filename or "document").rsplit(".", 1)[0]
 
-    job = Job(user_id=user.id, title=title, status="running", events=[])
+    # Category ACL (EF-27): must have `upload` on the target category.
+    cat = category_id or general_category_id(db, user.org_id)
+    if not cat:
+        raise HTTPException(400, "no category available")
+    require_category(db, user, cat, "upload")
+
+    provider, model_id = resolve_model(db, user, model, "extraction")
+    job = Job(org_id=user.org_id, user_id=user.id, title=title, status="running", events=[],
+              extraction_model=model_id, llm_provider=provider, category_id=cat)
     db.add(job)
     db.commit()
-    LIVE[job.id] = {"events": [], "cond": threading.Condition(), "done": False}
+    # Keep the original file so the user can view the source and compare it with
+    # chat answers.
+    db.add(DocumentFile(job_id=job.id, filename=file.filename or "document.pdf",
+                        mime=file.content_type or "application/pdf", data=data))
+    db.commit()
     audit("JOB_START", job=job.id, user=user.id, title=title, bytes=len(data))
-    threading.Thread(target=_run_job, args=(job.id, data), daemon=True).start()
+    run_extraction.delay(job.id)   # durable: runs in a Celery worker
     return {"job_id": job.id, "title": title}
 
 
 @app.get("/api/jobs")
-def list_jobs(user: User = Depends(get_current_user), db=Depends(get_db)):
+def list_jobs(category_id: str | None = None,
+              user: User = Depends(get_current_user), db=Depends(get_db)):
     q = select(Job).order_by(Job.created_at.desc())
     if user.role != "admin":
-        q = q.where(Job.user_id == user.id)
+        # Category ACL: jobs in a category the user can view, or their own.
+        vis = visible_category_ids(db, user)
+        q = q.where(or_(Job.category_id.in_(vis), Job.user_id == user.id))
+    if category_id:
+        q = q.where(Job.category_id == category_id)
     return [j.summary() for j in db.scalars(q).all()]
 
 
@@ -182,12 +135,27 @@ def _owned_job(job_id: str, user: User, db) -> Job:
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str, user: User = Depends(get_current_user), db=Depends(get_db)):
-    return _owned_job(job_id, user, db).detail()
+    job = require_job_access(db, user, job_id)
+    d = job.detail()
+    # Cheap existence check (selects the key only, not the blob).
+    d["has_pdf"] = db.scalar(select(DocumentFile.job_id).where(DocumentFile.job_id == job_id)) is not None
+    return d
+
+
+@app.get("/api/jobs/{job_id}/pdf")
+def get_pdf(job_id: str, user: User = Depends(get_current_user), db=Depends(get_db)):
+    require_job_access(db, user, job_id)
+    f = db.get(DocumentFile, job_id)
+    if not f:
+        raise HTTPException(404, "no source file stored for this document")
+    return Response(content=f.data, media_type=f.mime or "application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{f.filename}"'})
 
 
 @app.post("/api/jobs/{job_id}/retry-failed")
 def retry_failed_chunks(job_id: str,
                         user: User = Depends(require_role("admin", "analyst")),
+                        _rl: None = Depends(upload_limit),
                         db=Depends(get_db)):
     """Re-extract the chunks that failed and merge them into the existing graph
     (append, not a new job). Runs in the background; watch via the SSE stream."""
@@ -200,9 +168,8 @@ def retry_failed_chunks(job_id: str,
     job.status = "running"
     job.events = []
     db.commit()
-    LIVE[job_id] = {"events": [], "cond": threading.Condition(), "done": False}
     audit("RETRY_START", job=job_id, failed=len(failed))
-    threading.Thread(target=_retry_job, args=(job_id,), daemon=True).start()
+    retry_extraction.delay(job_id)   # durable: runs in a Celery worker
     return {"job_id": job_id, "retrying": len(failed)}
 
 
@@ -211,13 +178,13 @@ def delete_job(job_id: str, user: User = Depends(get_current_user), db=Depends(g
     job = _owned_job(job_id, user, db)
     db.delete(job)
     db.commit()
-    LIVE.pop(job_id, None)
+    job_events.reset(job_id)   # drop any Redis stream for this job
     return {"ok": True}
 
 
 @app.post("/api/jobs/{job_id}/stream-token")
 def stream_token(job_id: str, user: User = Depends(get_current_user), db=Depends(get_db)):
-    _owned_job(job_id, user, db)
+    require_job_access(db, user, job_id)
     return {"token": make_stream(user.id, job_id)}
 
 
@@ -227,41 +194,93 @@ def stream_events(job_id: str, t: str = "", db=Depends(get_db)):
     claims = safe_decode(t, "stream")
     if not claims or claims.get("job") != job_id:
         raise HTTPException(401, "invalid stream token")
-    if not db.get(Job, job_id):
+    job = db.get(Job, job_id)
+    if not job:
         raise HTTPException(404, "job not found")
 
-    live = LIVE.get(job_id)
+    # Capture what the generator needs before the request session closes.
+    running = job.status == "running"
+    db_events = list(job.events or [])
+    has_redis_stream = job_events.history_len(job_id) > 0
 
     def gen():
-        if live is None:
-            # No live registry (finished long ago / pre-restart) — replay the
-            # persisted events from the DB, then end.
-            job = db.get(Job, job_id)
-            for ev in (job.events or []):
+        if has_redis_stream or running:
+            # Live/recent job — replay Redis history then follow live until done
+            # (works across replicas; the worker publishes, any API serves it).
+            for ev in job_events.subscribe(job_id):
                 yield f"data: {json.dumps(ev)}\n\n"
-            yield "event: end\ndata: {}\n\n"
-            return
-        # Live job: replay everything emitted so far (so a reconnecting client
-        # after a refresh sees full progress), then follow new events until done.
-        cond = live["cond"]
-        idx = 0
-        while True:
-            with cond:
-                while idx >= len(live["events"]) and not live["done"]:
-                    cond.wait(timeout=15)  # periodic wake keeps the loop responsive
-                batch = live["events"][idx:]
-                idx += len(batch)
-                finished = live["done"] and idx >= len(live["events"])
-            for ev in batch:
+        else:
+            # Finished and expired from Redis — replay persisted DB events.
+            for ev in db_events:
                 yield f"data: {json.dumps(ev)}\n\n"
-            if finished:
-                yield "event: end\ndata: {}\n\n"
-                return
+        yield "event: end\ndata: {}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+@app.get("/api/models")
+def list_models(user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Models available to the caller (catalog filtered by org policy) + defaults."""
+    catalog = get_catalog()
+    policy = db.get(OrgModelPolicy, user.org_id) if user.org_id else None
+    allowed = set(policy.allowed_models) if policy and policy.allowed_models else {m["model_id"] for m in catalog}
+    models = [m for m in catalog if m["model_id"] in allowed]
+    us = db.get(UserSettings, user.id)
+    return {
+        "models": models,
+        "default_extraction_model": (us.default_extraction_model if us else None) or system_default(),
+        "default_chat_model": (us.default_chat_model if us else None) or system_default(),
+        "require_byo_key": bool(policy.require_byo_key) if policy else False,
+    }
+
+
+class ModelDefaultsIn(BaseModel):
+    default_extraction_model: str | None = None
+    default_chat_model: str | None = None
+
+
+@app.put("/api/me/model-defaults")
+def set_model_defaults(body: ModelDefaultsIn, user: User = Depends(get_current_user), db=Depends(get_db)):
+    us = db.get(UserSettings, user.id) or UserSettings(user_id=user.id)
+    if body.default_extraction_model is not None:
+        us.default_extraction_model = body.default_extraction_model or None
+    if body.default_chat_model is not None:
+        us.default_chat_model = body.default_chat_model or None
+    db.merge(us)
+    db.commit()
+    return {"ok": True}
+
+
+class ModelPolicyIn(BaseModel):
+    allowed_models: list[str] | None = None
+    default_extraction_model: str | None = None
+    default_chat_model: str | None = None
+    require_byo_key: bool | None = None
+
+
+@app.put("/api/orgs/{org_id}/model-policy")
+def set_model_policy(org_id: str, body: ModelPolicyIn,
+                     admin: User = Depends(require_role("admin")), db=Depends(get_db)):
+    if admin.org_id and admin.org_id != org_id:
+        raise HTTPException(403, "not your organization")
+    p = db.get(OrgModelPolicy, org_id) or OrgModelPolicy(org_id=org_id)
+    if body.allowed_models is not None:
+        p.allowed_models = body.allowed_models
+    if body.default_extraction_model is not None:
+        p.default_extraction_model = body.default_extraction_model or None
+    if body.default_chat_model is not None:
+        p.default_chat_model = body.default_chat_model or None
+    if body.require_byo_key is not None:
+        p.require_byo_key = body.require_byo_key
+    db.merge(p)
+    db.commit()
+    invalidate_catalog()  # policy affects resolution; drop cache fleet-wide
+    return {"ok": True}
+
+
 @app.get("/api/health")
 def health():
+    from app.redis_client import ping as redis_ping
     cfg = get_settings()
-    return {"ok": True, "provider": cfg.provider, "model": cfg.ollama_model}
+    return {"ok": True, "provider": cfg.provider, "model": cfg.ollama_model,
+            "redis": redis_ping()}

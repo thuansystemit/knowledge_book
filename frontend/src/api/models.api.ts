@@ -1,0 +1,21 @@
+import { api } from './client';
+
+export interface ModelOption {
+  model_id: string;
+  provider: string;
+  label: string;
+  is_local: boolean;
+  credit_cost_extraction: number;
+  credit_cost_chat: number;
+}
+export interface ModelsResponse {
+  models: ModelOption[];
+  default_extraction_model: string;
+  default_chat_model: string;
+  require_byo_key: boolean;
+}
+
+export async function getModels(): Promise<ModelsResponse> {
+  const { data } = await api.get<ModelsResponse>('/api/models');
+  return data;
+}

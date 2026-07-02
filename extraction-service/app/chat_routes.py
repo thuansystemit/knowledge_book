@@ -12,13 +12,16 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.access import require_job_access
 from app.chat import build_context
 from app.config import get_settings
 from app.db import get_db, session_scope
 from app.deps import get_current_user, require_role
-from app.llm.factory import get_chat_provider
+from app.llm.factory import get_provider
+from app.model_resolver import provider_for, resolve as resolve_model, system_default
 from app.models import ChatMessage, ChatSession, Job, User
 from app.observability import audit
+from app.ratelimit import chat_limit
 from app.security import make_chat_stream, safe_decode
 
 router = APIRouter(tags=["chat"])
@@ -26,22 +29,20 @@ router = APIRouter(tags=["chat"])
 
 class AskIn(BaseModel):
     question: str
+    model: str | None = None
 
 
 def _owned_job(job_id: str, user: User, db: Session) -> Job:
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(404, "job not found")
-    if job.user_id != user.id and user.role != "admin":
-        raise HTTPException(403, "not your job")
-    return job
+    # Category-aware access (EF-27): admin, owner, or `view` grant on the category.
+    return require_job_access(db, user, job_id)
 
 
 def _get_or_create_session(db: Session, job_id: str, user_id: str) -> ChatSession:
     s = db.scalar(select(ChatSession).where(
         ChatSession.job_id == job_id, ChatSession.user_id == user_id))
     if s is None:
-        s = ChatSession(job_id=job_id, user_id=user_id)
+        job = db.get(Job, job_id)
+        s = ChatSession(org_id=job.org_id if job else None, job_id=job_id, user_id=user_id)
         db.add(s)
         db.commit()
     return s
@@ -49,7 +50,8 @@ def _get_or_create_session(db: Session, job_id: str, user_id: str) -> ChatSessio
 
 @router.post("/api/jobs/{job_id}/chat")
 def ask(job_id: str, body: AskIn,
-        user: User = Depends(require_role("admin", "analyst")), db=Depends(get_db)):
+        user: User = Depends(require_role("admin", "analyst")),
+        _rl: None = Depends(chat_limit), db=Depends(get_db)):
     job = _owned_job(job_id, user, db)
     if job.status != "done" or not job.graph:
         raise HTTPException(409, "document is not ready for chat")
@@ -58,7 +60,8 @@ def ask(job_id: str, body: AskIn,
         raise HTTPException(400, "empty question")
 
     session = _get_or_create_session(db, job_id, user.id)
-    msg = ChatMessage(session_id=session.id, role="user", content=question)
+    _, model_id = resolve_model(db, user, body.model, "chat")   # per-request model choice
+    msg = ChatMessage(session_id=session.id, role="user", content=question, model=model_id)
     db.add(msg)
     db.commit()
     audit("CHAT_ASK", job=job_id, user=user.id, msg=msg.id)
@@ -85,10 +88,11 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
     ).all()
     history = [{"role": m.role, "content": m.content} for m in history_rows][-cfg.chat_history_turns:]
     system_prompt, citations = build_context(job.graph, user_msg.content)
-    graph_json = job.graph  # captured before the session closes
+    model_id = user_msg.model or system_default()
+    provider_name = provider_for(model_id)
 
     def gen():
-        provider = get_chat_provider()
+        provider = get_provider(provider_name, model_id)
         parts: list[str] = []
         try:
             for token in provider.stream_chat(system_prompt, history, max_tokens=2048):
@@ -108,8 +112,6 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
         yield f"data: {json.dumps({'done': True, 'citations': citations})}\n\n"
         yield "event: end\ndata: {}\n\n"
 
-    # silence unused (kept for clarity that graph is the grounding source)
-    _ = graph_json
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 

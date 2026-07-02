@@ -3,6 +3,7 @@ import {
   ask, clearHistory, getHistory, subscribeChatStream,
   type ChatMessage, type Citation,
 } from '../api/chat.api';
+import { getModels, type ModelOption } from '../api/models.api';
 import type { Graph } from '../api/jobs.api';
 
 function suggestions(graph: Graph): string[] {
@@ -21,36 +22,35 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState<string>('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { getHistory(jobId).then((h) => setMessages(h.messages)); }, [jobId]);
+  useEffect(() => {
+    getModels().then((m) => { setModels(m.models); setModel(m.default_chat_model); }).catch(() => {});
+  }, []);
   useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [messages, streaming]);
 
   const send = async (q: string) => {
     const question = q.trim();
     if (!question || busy) return;
-    setInput('');
-    setError(null);
-    setBusy(true);
+    setInput(''); setError(null); setBusy(true);
     setMessages((m) => [...m, { id: `local-${Date.now()}`, role: 'user', content: question }]);
     setStreaming('');
     try {
-      const { message_id, stream_token } = await ask(jobId, question);
+      const { message_id, stream_token } = await ask(jobId, question, model || undefined);
       let acc = '';
-      subscribeChatStream(
-        jobId, message_id, stream_token,
+      subscribeChatStream(jobId, message_id, stream_token,
         (tok) => { acc += tok; setStreaming(acc); },
         (citations: Citation[]) => {
           setMessages((m) => [...m, { id: `a-${Date.now()}`, role: 'assistant', content: acc, citations }]);
-          setStreaming(null);
-          setBusy(false);
+          setStreaming(null); setBusy(false);
         },
-        (msg) => { setError(msg); setStreaming(null); setBusy(false); },
-      );
+        (msg) => { setError(msg); setStreaming(null); setBusy(false); });
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? e?.message ?? 'failed to ask');
-      setStreaming(null);
-      setBusy(false);
+      setStreaming(null); setBusy(false);
     }
   };
 
@@ -63,25 +63,25 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
   const empty = messages.length === 0 && streaming === null;
 
   return (
-    <div className="chat">
-      <div className="chat-log" ref={scrollRef}>
+    <div className="d-flex flex-column">
+      <div className="chat-log d-flex flex-column gap-3 mb-3" ref={scrollRef}>
         {empty && (
-          <div className="chat-empty">
-            <p className="muted">Ask anything about this document — grounded in its knowledge graph.</p>
-            <div className="suggests">
+          <div className="my-auto">
+            <p className="text-secondary">Ask anything about this document — grounded in its knowledge graph.</p>
+            <div className="d-flex flex-wrap gap-2">
               {suggestions(graph).map((s) => (
-                <button key={s} className="chip" onClick={() => send(s)}>{s}</button>
+                <button key={s} className="btn btn-sm btn-outline-secondary rounded-pill" onClick={() => send(s)}>{s}</button>
               ))}
             </div>
           </div>
         )}
         {messages.map((m) => (
-          <div key={m.id} className={`bubble ${m.role}`}>
-            <div className="bubble-body">{m.content}</div>
+          <div key={m.id} className={`bubble ${m.role} ${m.role === 'user' ? 'align-self-end' : 'align-self-start'}`}>
+            <div>{m.content}</div>
             {m.citations && m.citations.length > 0 && (
-              <div className="cites">
+              <div className="d-flex flex-wrap gap-1 mt-2">
                 {m.citations.map((c, i) => (
-                  <span key={i} className="cite" title={c.name}>
+                  <span key={i} className="badge text-bg-light border" title={c.name}>
                     {c.name}{c.chapter ? ` · ${c.chapter} p.${c.page_start}-${c.page_end}` : ''}
                   </span>
                 ))}
@@ -90,24 +90,28 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
           </div>
         ))}
         {streaming !== null && (
-          <div className="bubble assistant">
-            <div className="bubble-body">{streaming || <span className="typing">…</span>}</div>
+          <div className="bubble assistant align-self-start">
+            <div>{streaming || <span className="typing">…</span>}</div>
           </div>
         )}
       </div>
 
-      {error && <p className="err">{error}</p>}
+      {error && <div className="alert alert-danger py-2 small">{error}</div>}
 
-      <form className="chat-input" onSubmit={(e) => { e.preventDefault(); send(input); }}>
-        <input
-          value={input}
-          placeholder="Ask a question…"
-          onChange={(e) => setInput(e.target.value)}
-          disabled={busy}
-        />
-        <button className="btn" disabled={busy || !input.trim()}>{busy ? '…' : 'Send'}</button>
+      <form className="d-flex gap-2" onSubmit={(e) => { e.preventDefault(); send(input); }}>
+        {models.length > 0 && (
+          <select className="form-select flex-shrink-0" style={{ width: 200 }} value={model}
+            onChange={(e) => setModel(e.target.value)} disabled={busy} title="Answer model">
+            {models.map((m) => <option key={m.model_id} value={m.model_id}>{m.label}</option>)}
+          </select>
+        )}
+        <input className="form-control" value={input} placeholder="Ask a question…"
+          onChange={(e) => setInput(e.target.value)} disabled={busy} />
+        <button className="btn btn-primary" disabled={busy || !input.trim()}>
+          {busy ? '…' : <><i className="bi bi-send me-1"></i>Send</>}
+        </button>
         {messages.length > 0 && (
-          <button type="button" className="btn-ghost" onClick={onClear} disabled={busy}>Clear</button>
+          <button type="button" className="btn btn-outline-secondary" onClick={onClear} disabled={busy}>Clear</button>
         )}
       </form>
     </div>

@@ -8,7 +8,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON, Boolean, DateTime, ForeignKey, LargeBinary, Numeric, String, Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -24,10 +27,24 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Organization(Base):
+    """Tenant (EF-12). SaaS = many orgs; on-prem = a single auto-created org."""
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(255), default="Default")
+    slug: Mapped[str] = mapped_column(String(63), unique=True, index=True, default="default")
+    tier: Mapped[str] = mapped_column(String(20), default="enterprise")  # team|business|enterprise
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(120), default="")
@@ -47,10 +64,14 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(16), default="running")  # running|done|error
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    llm_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    category_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     events: Mapped[list] = mapped_column(JSON, default=list)
     graph: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -74,11 +95,98 @@ class Job(Base):
         }
 
 
+class DocumentFile(Base):
+    """The original uploaded file for a job, so the user can view the source and
+    compare it with chat answers. One row per job (keyed by job_id)."""
+    __tablename__ = "document_files"
+
+    job_id: Mapped[str] = mapped_column(String(32), ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    filename: Mapped[str] = mapped_column(String(255), default="document.pdf")
+    mime: Mapped[str] = mapped_column(String(100), default="application/pdf")
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Category(Base):
+    """Admin-created document category / collection (EF-27). A "category" is the
+    deal-room / matter folder in the legal wedge. Access to it (and its docs) is
+    governed by CategoryPermission — default-deny."""
+    __tablename__ = "categories"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_category_org_name"),)
+
+
+class CategoryPermission(Base):
+    """Per-category grant (EF-27, D8: subject_type='user' in v1; 'role' reserved
+    for v2). Hierarchy: view < upload < manage (manage = membership only, D10)."""
+    __tablename__ = "category_permissions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    category_id: Mapped[str] = mapped_column(String(32), ForeignKey("categories.id", ondelete="CASCADE"), index=True)
+    subject_type: Mapped[str] = mapped_column(String(10), default="user")  # user|role
+    subject_id: Mapped[str] = mapped_column(String(32), index=True)
+    grant_type: Mapped[str] = mapped_column(String(10))  # view|upload|manage
+    granted_by: Mapped[str] = mapped_column(String(32))
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (UniqueConstraint("category_id", "subject_type", "subject_id",
+                                       name="uq_catperm_cat_subject"),)
+
+
+class ModelCatalog(Base):
+    """Available LLM models (EF-28 / D14 config-as-data). Read per request +
+    Redis-cached; admin-editable without a restart."""
+    __tablename__ = "model_catalog"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    provider: Mapped[str] = mapped_column(String(20))  # ollama|claude|openai
+    model_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(255))
+    is_local: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(default=100)
+    credit_cost_extraction: Mapped[float] = mapped_column(Numeric(6, 2), default=0)
+    credit_cost_chat: Mapped[float] = mapped_column(Numeric(6, 2), default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class OrgModelPolicy(Base):
+    """Per-org governance of model choice (EF-28)."""
+    __tablename__ = "org_model_policies"
+
+    org_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    allowed_models: Mapped[list] = mapped_column(JSON, default=list)  # model_ids; empty => all enabled
+    default_extraction_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    default_chat_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    require_byo_key: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class UserSettings(Base):
+    """Per-user default model preferences (D14 precedence chain)."""
+    __tablename__ = "user_settings"
+
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    default_extraction_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    default_chat_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class ChatSession(Base):
     """One chat thread per (job, user). Lazily created on the first question."""
     __tablename__ = "chat_sessions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     job_id: Mapped[str] = mapped_column(String(32), ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

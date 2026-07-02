@@ -13,6 +13,10 @@ openai==1.51.2
 fastapi==0.115.0
 uvicorn==0.30.6
 python-multipart==0.0.9
+# Redis — Celery broker, cross-replica SSE pub/sub, config cache (enterprise backbone).
+redis==5.0.8
+# Celery — durable job execution (worker fleet), replacing daemon threads.
+celery==5.4.0
 # Auth + persistence (Sprint 1a: users, JWT + refresh, per-user jobs).
 sqlalchemy==2.0.35
 psycopg2-binary==2.9.9

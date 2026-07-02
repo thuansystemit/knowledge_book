@@ -61,6 +61,12 @@ class Settings:
     # --- Auth + persistence (Sprint 1a) -------------------------------------
     database_url: str = field(default_factory=lambda: os.environ.get(
         "DATABASE_URL", "postgresql+psycopg2://kb:kb@db:5432/kb"))
+    # Redis (enterprise backbone: Celery, SSE pub/sub, config cache).
+    redis_url: str = field(default_factory=lambda: os.environ.get(
+        "REDIS_URL", "redis://redis:6379/0"))
+    # Rate limits per user (0 = disabled). Redis-backed, works across replicas.
+    rate_upload_per_hour: int = field(default_factory=lambda: int(os.environ.get("RATE_UPLOAD_PER_HOUR", "30")))
+    rate_chat_per_min: int = field(default_factory=lambda: int(os.environ.get("RATE_CHAT_PER_MIN", "20")))
     jwt_secret: str = field(default_factory=lambda: os.environ.get("JWT_SECRET", "dev-secret-change-me"))
     access_ttl_min: int = field(default_factory=lambda: int(os.environ.get("ACCESS_TTL_MIN", "15")))
     refresh_ttl_days: int = field(default_factory=lambda: int(os.environ.get("REFRESH_TTL_DAYS", "7")))

@@ -21,6 +21,19 @@ services:
       timeout: 3s
       retries: 10
 
+  # Redis — backbone for the enterprise migration: Celery broker/result (EF-01),
+  # cross-replica SSE pub/sub (EF-03), and the config-as-data cache (D14).
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - kb_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # HTTP API + auth for the dashboard.
   api:
     build: .
@@ -31,9 +44,28 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - OLLAMA_BASE_URL=http://192.168.100.158:11434
       - DATABASE_URL=postgresql+psycopg2://kb:kb@db:5432/kb
+      - REDIS_URL=redis://redis:6379/0
+
+  # Celery worker — durable extraction/retry jobs (survive restarts).
+  worker:
+    build: .
+    entrypoint: ["celery", "-A", "app.celery_app.celery_app", "worker",
+                 "--loglevel=info", "--concurrency=2", "-Q", "extraction"]
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - OLLAMA_BASE_URL=http://192.168.100.158:11434
+      - DATABASE_URL=postgresql+psycopg2://kb:kb@db:5432/kb
+      - REDIS_URL=redis://redis:6379/0
 
   # React workflow dashboard (Vite build -> nginx).
   frontend:
@@ -60,3 +92,4 @@ services:
 
 volumes:
   kb_pgdata:
+  kb_redisdata:
