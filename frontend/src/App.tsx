@@ -13,6 +13,9 @@ import { ProfilePage } from './routes/ProfilePage';
 import { UsersPage } from './routes/admin/UsersPage';
 import { CategoriesPage } from './routes/admin/CategoriesPage';
 import { ConfigPage } from './routes/admin/ConfigPage';
+import { AboutPage } from './routes/legal/About';
+import { PrivacyPage } from './routes/legal/Privacy';
+import { TermsPage } from './routes/legal/Terms';
 
 export default function App() {
   const setAuth = useAuthStore((s) => s.setAuth);
@@ -42,6 +45,15 @@ export default function App() {
           <Route element={<ProtectedRoute roles={['admin', 'analyst']} />}>
             <Route path="/documents/new" element={<UploadPage />} />
           </Route>
+          {/*
+           * Legal pages are inside the authenticated shell so they get the
+           * nav + footer and stay consistent with the rest of the app.
+           * If these pages should be publicly accessible (pre-login), move
+           * these three routes outside the <ProtectedRoute> wrapper.
+           */}
+          <Route path="/about"   element={<AboutPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms"   element={<TermsPage />} />
         </Route>
       </Route>
 

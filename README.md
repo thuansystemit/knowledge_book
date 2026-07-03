@@ -34,7 +34,7 @@ token + HttpOnly refresh cookie) with **RBAC** (admin / analyst / viewer),
 ```mermaid
 flowchart TB
     subgraph Browser
-      UI["React dashboard (Vite + Bootstrap/Tailwind)<br/>Documents · Workflow · Graph · Chat · Source PDF · Admin · Profile"]
+      UI["React dashboard (Vite + Bootstrap/Tailwind)<br/>Documents · Workflow · Graph · Chat · Source PDF · Admin · Profile · About/Privacy/Terms"]
     end
 
     subgraph Docker["Docker stack"]
@@ -114,7 +114,11 @@ flowchart LR
   view/upload/manage **ACLs** (default-deny). Roles are enforced end-to-end: only
   **admin/analyst** upload; only the **owner or admin** deletes; **all roles** can
   view and chat documents they've been granted. Admin console for users +
-  categories, plus a per-user **profile** page (model preferences, sign out).
+  categories, plus a per-user **profile** page (model preferences, sign out)
+  reached from an **avatar dropdown** (view profile / logout).
+- **App shell** — top navigation + a site **footer** linking **About**,
+  **Privacy**, and **Terms & Conditions** pages (legal copy is a placeholder to be
+  reviewed by counsel).
 - **Ops** — Postgres + Redis + Celery worker; per-user **rate limiting**.
 
 See [`docs/ENTERPRISE-productization.md`](docs/ENTERPRISE-productization.md) for the
