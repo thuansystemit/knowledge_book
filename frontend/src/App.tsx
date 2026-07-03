@@ -3,13 +3,16 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { refresh } from './api/auth.api';
 import { useAuthStore } from './store/authStore';
 import { AppLayout } from './components/AppLayout';
+import { PageSpinner } from './components/PageSpinner';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { LoginPage } from './routes/LoginPage';
 import { DocumentsPage } from './routes/DocumentsPage';
 import { UploadPage } from './routes/UploadPage';
 import { DocumentDetailPage } from './routes/DocumentDetailPage';
+import { ProfilePage } from './routes/ProfilePage';
 import { UsersPage } from './routes/admin/UsersPage';
 import { CategoriesPage } from './routes/admin/CategoriesPage';
+import { ConfigPage } from './routes/admin/ConfigPage';
 
 export default function App() {
   const setAuth = useAuthStore((s) => s.setAuth);
@@ -24,11 +27,7 @@ export default function App() {
       .finally(() => setReady(true));
   }, [setAuth]);
 
-  if (!ready) return (
-    <div className="d-flex align-items-center justify-content-center min-vh-100 text-secondary">
-      <div className="spinner-border text-primary me-2" role="status" style={{ width: 22, height: 22 }} /> Loading…
-    </div>
-  );
+  if (!ready) return <PageSpinner />;
 
   return (
     <Routes>
@@ -37,8 +36,12 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route path="/documents" element={<DocumentsPage />} />
-          <Route path="/documents/new" element={<UploadPage />} />
           <Route path="/documents/:id" element={<DocumentDetailPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          {/* Upload is restricted to roles that can upload (viewers can't). */}
+          <Route element={<ProtectedRoute roles={['admin', 'analyst']} />}>
+            <Route path="/documents/new" element={<UploadPage />} />
+          </Route>
         </Route>
       </Route>
 
@@ -46,6 +49,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/admin/users" element={<UsersPage />} />
           <Route path="/admin/categories" element={<CategoriesPage />} />
+          <Route path="/admin/config" element={<ConfigPage />} />
         </Route>
       </Route>
 

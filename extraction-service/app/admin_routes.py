@@ -35,14 +35,16 @@ def list_users(_: User = Depends(require_role("admin")), db: Session = Depends(g
 
 
 @router.post("/users")
-def create_user(body: CreateUserIn, _: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
+def create_user(body: CreateUserIn, admin: User = Depends(require_role("admin")), db: Session = Depends(get_db)):
     if body.role not in ROLES:
         raise HTTPException(400, f"role must be one of {ROLES}")
     if "@" not in body.email or len(body.email) < 3:
         raise HTTPException(400, "invalid email")
     if db.scalar(select(User).where(User.email == body.email)):
         raise HTTPException(409, "email already exists")
-    user = User(email=body.email, password_hash=hash_password(body.password),
+    # New users belong to the creating admin's org — otherwise org-scoped
+    # operations (category grants, model defaults) reject them as out-of-org.
+    user = User(org_id=admin.org_id, email=body.email, password_hash=hash_password(body.password),
                 name=body.name, role=body.role)
     db.add(user)
     db.commit()

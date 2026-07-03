@@ -13,6 +13,8 @@ export interface ModelsResponse {
   default_extraction_model: string;
   default_chat_model: string;
   require_byo_key: boolean;
+  /** 'retrieval' (no query-time LLM) or 'llm'. Controls whether chat shows a model picker. */
+  chat_mode?: string;
 }
 
 export async function getModels(): Promise<ModelsResponse> {

@@ -13,10 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.access import require_job_access
-from app.chat import build_context
+from app.chat import build_context, compose_answer
 from app.config import get_settings
 from app.db import get_db, session_scope
-from app.deps import get_current_user, require_role
+from app.deps import get_current_user
 from app.llm.factory import get_provider
 from app.model_resolver import provider_for, resolve as resolve_model, system_default
 from app.models import ChatMessage, ChatSession, Job, User
@@ -50,8 +50,11 @@ def _get_or_create_session(db: Session, job_id: str, user_id: str) -> ChatSessio
 
 @router.post("/api/jobs/{job_id}/chat")
 def ask(job_id: str, body: AskIn,
-        user: User = Depends(require_role("admin", "analyst")),
+        user: User = Depends(get_current_user),
         _rl: None = Depends(chat_limit), db=Depends(get_db)):
+    # Any role may chat, gated per-document by `_owned_job` (admin, owner, or a
+    # `view` grant on the category). Chat is a read-only lookup over a document
+    # the user can already see — viewers included.
     job = _owned_job(job_id, user, db)
     if job.status != "done" or not job.graph:
         raise HTTPException(409, "document is not ready for chat")
@@ -60,7 +63,9 @@ def ask(job_id: str, body: AskIn,
         raise HTTPException(400, "empty question")
 
     session = _get_or_create_session(db, job_id, user.id)
-    _, model_id = resolve_model(db, user, body.model, "chat")   # per-request model choice
+    # Only resolve a model when an LLM will actually answer; retrieval mode needs
+    # none (and avoids per-role model-policy checks for viewers).
+    model_id = resolve_model(db, user, body.model, "chat")[1] if get_settings().chat_mode == "llm" else None
     msg = ChatMessage(session_id=session.id, role="user", content=question, model=model_id)
     db.add(msg)
     db.commit()
@@ -87,6 +92,25 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
         .order_by(ChatMessage.created_at)
     ).all()
     history = [{"role": m.role, "content": m.content} for m in history_rows][-cfg.chat_history_turns:]
+
+    # Retrieval mode (default): compose the answer deterministically from the
+    # extracted graph — no query-time LLM call. Reuses the same SSE contract
+    # (one token frame + a done frame) so the frontend is unchanged.
+    if cfg.chat_mode != "llm":
+        answer, citations = compose_answer(job.graph, user_msg.content)
+
+        def gen_retrieval():
+            with session_scope() as s:
+                s.add(ChatMessage(session_id=session.id, role="assistant",
+                                  content=answer, citations=citations,
+                                  model="retrieval-v1"))
+            yield f"data: {json.dumps({'token': answer})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'citations': citations})}\n\n"
+            yield "event: end\ndata: {}\n\n"
+
+        return StreamingResponse(gen_retrieval(), media_type="text/event-stream")
+
+    # LLM mode: stream a generated answer from the configured chat model.
     system_prompt, citations = build_context(job.graph, user_msg.content)
     model_id = user_msg.model or system_default()
     provider_name = provider_for(model_id)

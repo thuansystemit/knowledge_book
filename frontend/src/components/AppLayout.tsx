@@ -1,74 +1,93 @@
-import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { logout as apiLogout } from '../api/auth.api';
+import { APP_NAME, canUpload } from '../lib/constants';
 
-const NAV = [
-  { to: '/documents', label: 'Documents', icon: 'bi-folder2-open', roles: ['admin', 'analyst'] },
-  { to: '/documents/new', label: 'New extraction', icon: 'bi-plus-circle', roles: ['admin', 'analyst'] },
-  { to: '/admin/categories', label: 'Categories', icon: 'bi-folder', roles: ['admin'] },
-  { to: '/admin/users', label: 'Users', icon: 'bi-people', roles: ['admin'] },
+// Primary nav links. `uploader: true` items are hidden from roles that can't
+// upload (viewers).
+const PRIMARY_NAV = [
+  { to: '/documents/new', label: 'Upload',    end: true, uploader: true },
+  { to: '/documents',     label: 'Documents', end: true },
+];
+
+// Admin-only nav links shown inline (styled same as primary)
+const ADMIN_NAV = [
+  { to: '/admin/users',  label: 'Users'  },
+  { to: '/admin/config', label: 'Config' },
 ];
 
 export function AppLayout() {
-  const { user, clear } = useAuthStore();
-  const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
+  const { user } = useAuthStore();
 
-  const onLogout = async () => {
-    try { await apiLogout(); } finally { clear(); navigate('/login', { replace: true }); }
-  };
+  const isAdmin = user?.role === 'admin';
+  const mayUpload = canUpload(user?.role);
 
   const initials = (user?.name || user?.email || '?')
-    .split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((s) => s[0]?.toUpperCase()).join('');
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase())
+    .join('');
+
+  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `topnav-link${isActive ? ' active' : ''}`;
 
   return (
-    <div className="d-flex" style={{ minHeight: '100vh' }}>
-      {/* Sidebar */}
-      <aside className="text-white p-3 flex-shrink-0" style={{ width: 240, background: '#0f172a' }}>
-        <div className="app-brand fs-5 mb-4 px-2 d-flex align-items-center gap-2">
-          <i className="bi bi-diagram-3-fill text-indigo-400" style={{ color: '#818cf8' }}></i>
-          KnowledgeBook
-        </div>
-        <nav className="d-flex flex-column gap-1">
-          {NAV.filter((n) => user && n.roles.includes(user.role)).map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/documents'}
-              className={({ isActive }) => `side-link${isActive ? ' active' : ''}`}>
-              <i className={`bi ${n.icon}`}></i>{n.label}
+    <div className="app-shell">
+      {/* ── Top navigation ── */}
+      <nav className="app-topnav" role="navigation" aria-label="Main navigation">
+        {/* Wordmark */}
+        <NavLink to="/documents" className="app-brand" aria-label={APP_NAME}>
+          {APP_NAME}
+        </NavLink>
+
+        {/* Primary links */}
+        <div className="topnav-links">
+          {PRIMARY_NAV.filter((n) => !n.uploader || mayUpload).map((n) => (
+            <NavLink key={n.to} to={n.to} end={n.end} className={navLinkClass}>
+              {n.label}
             </NavLink>
           ))}
-        </nav>
-      </aside>
 
-      {/* Main */}
-      <div className="flex-grow-1 d-flex flex-column" style={{ minWidth: 0 }}>
-        <header className="bg-white border-bottom d-flex align-items-center justify-content-end px-4"
-          style={{ height: 60 }}>
-          <div className="dropdown">
-            <button className="btn btn-light rounded-circle fw-bold d-flex align-items-center justify-content-center"
-              style={{ width: 40, height: 40, background: '#eef2ff', color: '#4f46e5' }}
-              onClick={() => setOpen((o) => !o)}>
-              {initials}
-            </button>
-            {open && (
-              <div className="dropdown-menu dropdown-menu-end show mt-2" style={{ right: 0 }}
-                onMouseLeave={() => setOpen(false)}>
-                <div className="px-3 py-2 border-bottom">
-                  <div className="fw-semibold text-truncate" style={{ maxWidth: 200 }}>{user?.name || user?.email}</div>
-                  <span className="badge text-bg-light text-uppercase">{user?.role}</span>
-                </div>
-                <button className="dropdown-item" onClick={onLogout}>
-                  <i className="bi bi-box-arrow-right me-2"></i>Log out
-                </button>
-              </div>
-            )}
-          </div>
-        </header>
+          {/* Admin-only extra links */}
+          {isAdmin && ADMIN_NAV.map((n) => (
+            <NavLink key={n.to} to={n.to} className={navLinkClass}>
+              {n.label}
+            </NavLink>
+          ))}
+        </div>
 
-        <main className="p-4" style={{ maxWidth: 1120, width: '100%' }}>
-          <Outlet />
-        </main>
-      </div>
+        {/* Right side */}
+        <div className="topnav-right">
+          {/* Categories pill — admin only */}
+          {isAdmin && (
+            <NavLink
+              to="/admin/categories"
+              className={({ isActive }) =>
+                `categories-pill${isActive ? ' active' : ''}`
+              }
+            >
+              Categories
+              <span className="admin-badge">ADMIN</span>
+            </NavLink>
+          )}
+
+          {/* Avatar — navigates to /profile */}
+          <NavLink
+            to="/profile"
+            className={({ isActive }) =>
+              `user-avatar${isActive ? ' user-avatar--active' : ''}`
+            }
+            aria-label="Your profile"
+          >
+            {initials}
+          </NavLink>
+        </div>
+      </nav>
+
+      {/* ── Page content ── */}
+      <main className="app-main">
+        <Outlet />
+      </main>
     </div>
   );
 }

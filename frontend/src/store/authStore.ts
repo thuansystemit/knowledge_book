@@ -6,6 +6,7 @@ export interface User {
   name: string;
   role: 'admin' | 'analyst' | 'viewer';
   is_active: boolean;
+  created_at?: string;
 }
 
 interface AuthState {

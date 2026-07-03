@@ -87,6 +87,11 @@ class Settings:
     # Multi-turn: how many prior messages to include as history (kept small for
     # the local model's context window).
     chat_history_turns: int = field(default_factory=lambda: int(os.environ.get("CHAT_HISTORY_TURNS", "8")))
+    # How chat answers a question:
+    #   "retrieval" (default) — no query-time LLM; answers are composed
+    #        deterministically from the extracted graph (see chat.compose_answer).
+    #   "llm" — stream a generated answer from the configured chat model.
+    chat_mode: str = field(default_factory=lambda: os.environ.get("CHAT_MODE", "retrieval").strip().lower())
 
 
 def get_settings() -> Settings:

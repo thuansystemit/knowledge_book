@@ -5,14 +5,16 @@ import {
 } from '../api/chat.api';
 import { getModels, type ModelOption } from '../api/models.api';
 import type { Graph } from '../api/jobs.api';
+import { getApiError } from '../lib/utils';
+import { Select } from './Select';
 
 function suggestions(graph: Graph): string[] {
   const out: string[] = [];
-  if (graph.brief?.thesis) out.push('What is the main thesis of this book?');
+  if (graph.brief?.thesis) out.push('What is the main thesis of this document?');
   graph.nodes.slice(0, 2).forEach((n) => out.push(`Explain "${n.name}".`));
   const e = graph.edges[0];
   if (e) out.push(`How does "${e.source}" relate to "${e.target}"?`);
-  out.push('Summarize chapter 1.');
+  out.push('Summarise chapter 1.');
   return out.slice(0, 4);
 }
 
@@ -24,33 +26,49 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState<string>('');
+  // 'retrieval' answers come from the extracted graph with no LLM, so the
+  // per-answer model picker is hidden.
+  const [chatMode, setChatMode] = useState<string>('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { getHistory(jobId).then((h) => setMessages(h.messages)); }, [jobId]);
   useEffect(() => {
-    getModels().then((m) => { setModels(m.models); setModel(m.default_chat_model); }).catch(() => {});
+    getModels()
+      .then((m) => { setModels(m.models); setModel(m.default_chat_model); setChatMode(m.chat_mode ?? 'llm'); })
+      .catch(() => {});
   }, []);
-  useEffect(() => { scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight); }, [messages, streaming]);
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages, streaming]);
 
   const send = async (q: string) => {
     const question = q.trim();
     if (!question || busy) return;
-    setInput(''); setError(null); setBusy(true);
+    setInput('');
+    setError(null);
+    setBusy(true);
     setMessages((m) => [...m, { id: `local-${Date.now()}`, role: 'user', content: question }]);
     setStreaming('');
     try {
       const { message_id, stream_token } = await ask(jobId, question, model || undefined);
       let acc = '';
-      subscribeChatStream(jobId, message_id, stream_token,
+      subscribeChatStream(
+        jobId, message_id, stream_token,
         (tok) => { acc += tok; setStreaming(acc); },
         (citations: Citation[]) => {
-          setMessages((m) => [...m, { id: `a-${Date.now()}`, role: 'assistant', content: acc, citations }]);
-          setStreaming(null); setBusy(false);
+          setMessages((m) => [
+            ...m,
+            { id: `a-${Date.now()}`, role: 'assistant', content: acc, citations },
+          ]);
+          setStreaming(null);
+          setBusy(false);
         },
-        (msg) => { setError(msg); setStreaming(null); setBusy(false); });
-    } catch (e: any) {
-      setError(e?.response?.data?.detail ?? e?.message ?? 'failed to ask');
-      setStreaming(null); setBusy(false);
+        (msg) => { setError(msg); setStreaming(null); setBusy(false); },
+      );
+    } catch (err: unknown) {
+      setError(getApiError(err, 'failed to ask'));
+      setStreaming(null);
+      setBusy(false);
     }
   };
 
@@ -64,54 +82,120 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
 
   return (
     <div className="d-flex flex-column">
-      <div className="chat-log d-flex flex-column gap-3 mb-3" ref={scrollRef}>
+      {/* ── Chat log ── */}
+      <div className="chat-log" ref={scrollRef}>
         {empty && (
-          <div className="my-auto">
-            <p className="text-secondary">Ask anything about this document — grounded in its knowledge graph.</p>
-            <div className="d-flex flex-wrap gap-2">
+          <div style={{ marginTop: 'auto', paddingTop: '0.5rem' }}>
+            <p style={{ fontSize: '0.875rem', color: 'var(--muted)', marginBottom: '0.875rem' }}>
+              Ask anything about this document — grounded in its knowledge graph.
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
               {suggestions(graph).map((s) => (
-                <button key={s} className="btn btn-sm btn-outline-secondary rounded-pill" onClick={() => send(s)}>{s}</button>
+                <button key={s} className="chat-suggestion" onClick={() => send(s)}>
+                  {s}
+                </button>
               ))}
             </div>
           </div>
         )}
+
         {messages.map((m) => (
-          <div key={m.id} className={`bubble ${m.role} ${m.role === 'user' ? 'align-self-end' : 'align-self-start'}`}>
+          <div
+            key={m.id}
+            className={`bubble ${m.role}`}
+            style={m.role === 'user' ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' }}
+          >
             <div>{m.content}</div>
+            {/* Citation chips — white bg, terracotta dot + text */}
             {m.citations && m.citations.length > 0 && (
-              <div className="d-flex flex-wrap gap-1 mt-2">
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.375rem',
+                  marginTop: '0.625rem',
+                }}
+              >
                 {m.citations.map((c, i) => (
-                  <span key={i} className="badge text-bg-light border" title={c.name}>
-                    {c.name}{c.chapter ? ` · ${c.chapter} p.${c.page_start}-${c.page_end}` : ''}
+                  <span key={i} className="citation-chip" title={c.name}>
+                    <span className="citation-chip-dot" aria-hidden="true"></span>
+                    {c.name}
+                    {c.chapter ? ` · ${c.chapter} p.${c.page_start}` : ''}
                   </span>
                 ))}
               </div>
             )}
           </div>
         ))}
+
         {streaming !== null && (
-          <div className="bubble assistant align-self-start">
-            <div>{streaming || <span className="typing">…</span>}</div>
+          <div className="bubble assistant" style={{ alignSelf: 'flex-start' }}>
+            <div>{streaming || <span className="typing">Thinking…</span>}</div>
           </div>
         )}
       </div>
 
-      {error && <div className="alert alert-danger py-2 small">{error}</div>}
+      {error && (
+        <div className="alert alert-danger mb-2" role="alert">
+          <i className="bi bi-exclamation-circle me-2"></i>
+          {error}
+        </div>
+      )}
 
-      <form className="d-flex gap-2" onSubmit={(e) => { e.preventDefault(); send(input); }}>
-        {models.length > 0 && (
-          <select className="form-select flex-shrink-0" style={{ width: 200 }} value={model}
-            onChange={(e) => setModel(e.target.value)} disabled={busy} title="Answer model">
-            {models.map((m) => <option key={m.model_id} value={m.model_id}>{m.label}</option>)}
-          </select>
+      {/* ── Input row — pill-shaped ── */}
+      <form
+        className="d-flex gap-2 mt-2"
+        onSubmit={(e) => { e.preventDefault(); send(input); }}
+      >
+        {chatMode !== 'retrieval' && models.length > 0 && (
+          <Select
+            value={model}
+            onChange={setModel}
+            options={models.map((m) => ({ value: m.model_id, label: m.label }))}
+            disabled={busy}
+            width={180}
+            ariaLabel="Answer model"
+            className="flex-shrink-0"
+          />
         )}
-        <input className="form-control" value={input} placeholder="Ask a question…"
-          onChange={(e) => setInput(e.target.value)} disabled={busy} />
-        <button className="btn btn-primary" disabled={busy || !input.trim()}>
-          {busy ? '…' : <><i className="bi bi-send me-1"></i>Send</>}
+
+        {/* Pill-shaped text input */}
+        <input
+          className="form-control chat-input-pill"
+          value={input}
+          placeholder="Ask a question…"
+          onChange={(e) => setInput(e.target.value)}
+          disabled={busy}
+          aria-label="Your question"
+        />
+
+        {/* Terracotta Send pill */}
+        <button
+          type="submit"
+          className="btn btn-primary flex-shrink-0"
+          disabled={busy || !input.trim()}
+          aria-label="Send"
+        >
+          {busy ? (
+            <span
+              className="spinner-border spinner-border-sm"
+              role="status"
+              aria-hidden="true"
+            ></span>
+          ) : (
+            'Send'
+          )}
         </button>
+
         {messages.length > 0 && (
-          <button type="button" className="btn btn-outline-secondary" onClick={onClear} disabled={busy}>Clear</button>
+          <button
+            type="button"
+            className="btn btn-outline-secondary flex-shrink-0"
+            onClick={onClear}
+            disabled={busy}
+          >
+            Clear
+          </button>
         )}
       </form>
     </div>

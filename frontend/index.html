@@ -6,7 +6,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap"
       rel="stylesheet"
     />
     <!-- Bootstrap 5 (components) + icons -->
@@ -23,10 +23,30 @@
     <script>
       tailwind.config = {
         corePlugins: { preflight: false },
-        theme: { extend: { colors: { brand: '#4f46e5' } } },
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                DEFAULT: '#b5551f',
+                hover:   '#9d4719',
+                light:   '#f7ede6',
+                muted:   '#d4a088',
+                400:     '#d4896a',
+              },
+              ink:    '#1c1208',
+              canvas: '#f0ece4',
+              peach:  '#f7ede6',
+              slate: {
+                50:  '#faf8f5', 100: '#f5f0e8', 200: '#e5ddd5',
+                300: '#c9bcb0', 400: '#b0a090', 500: '#9a8778',
+                600: '#7a6a5c', 700: '#5a4d40', 800: '#3a2f26', 900: '#1c1208',
+              },
+            },
+          },
+        },
       };
     </script>
-    <title>KnowledgeBook</title>
+    <title>Archivist</title>
   </head>
   <body>
     <div id="root"></div>

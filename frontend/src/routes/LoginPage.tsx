@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login } from '../api/auth.api';
 import { useAuthStore } from '../store/authStore';
+import { APP_NAME } from '../lib/constants';
 
 export function LoginPage() {
   const setAuth = useAuthStore((s) => s.setAuth);
@@ -18,7 +19,7 @@ export function LoginPage() {
     try {
       const { access_token, user } = await login(email, password);
       setAuth(access_token, user);
-      navigate(user.role === 'admin' ? '/admin/users' : '/documents', { replace: true });
+      navigate(user.role === 'admin' ? '/admin/categories' : '/documents', { replace: true });
     } catch {
       setErr('Invalid email or password.');
     } finally {
@@ -27,30 +28,68 @@ export function LoginPage() {
   };
 
   return (
-    <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-      <div className="card shadow-sm border-0 rounded-4" style={{ width: 400 }}>
-        <div className="card-body p-4 p-md-5">
-          <div className="app-brand fs-4 mb-1 d-flex align-items-center gap-2">
-            <i className="bi bi-diagram-3-fill" style={{ color: '#4f46e5' }}></i>KnowledgeBook
+    <div className="login-wrap">
+      <div className="login-card">
+        <div className="login-brand">{APP_NAME}</div>
+        <p className="page-subtitle" style={{ marginBottom: '1.75rem' }}>
+          Sign in to your archive
+        </p>
+
+        <form onSubmit={submit}>
+          <div className="mb-3">
+            <label className="form-label" htmlFor="login-email">
+              Email
+            </label>
+            <input
+              id="login-email"
+              className="form-control"
+              type="email"
+              value={email}
+              autoFocus
+              autoComplete="email"
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </div>
-          <p className="text-secondary mb-4">Sign in to your workspace</p>
-          <form onSubmit={submit}>
-            <div className="mb-3">
-              <label className="form-label small fw-semibold text-secondary">Email</label>
-              <input className="form-control" value={email} autoFocus
-                onChange={(e) => setEmail(e.target.value)} />
+          <div className="mb-4">
+            <label className="form-label" htmlFor="login-password">
+              Password
+            </label>
+            <input
+              id="login-password"
+              type="password"
+              className="form-control"
+              value={password}
+              autoComplete="current-password"
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+
+          {err && (
+            <div className="alert alert-danger mb-3" role="alert">
+              <i className="bi bi-exclamation-circle me-2"></i>
+              {err}
             </div>
-            <div className="mb-3">
-              <label className="form-label small fw-semibold text-secondary">Password</label>
-              <input type="password" className="form-control" value={password}
-                onChange={(e) => setPassword(e.target.value)} />
-            </div>
-            {err && <div className="alert alert-danger py-2 small">{err}</div>}
-            <button className="btn btn-primary w-100 fw-semibold py-2" disabled={busy || !email || !password}>
-              {busy ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
-        </div>
+          )}
+
+          <button
+            type="submit"
+            className="btn btn-primary w-100 py-2"
+            disabled={busy || !email || !password}
+          >
+            {busy ? (
+              <>
+                <span
+                  className="spinner-border spinner-border-sm me-2"
+                  role="status"
+                  aria-hidden="true"
+                ></span>
+                Signing in…
+              </>
+            ) : (
+              'Sign in'
+            )}
+          </button>
+        </form>
       </div>
     </div>
   );

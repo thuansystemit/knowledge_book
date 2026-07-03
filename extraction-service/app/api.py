@@ -231,6 +231,9 @@ def list_models(user: User = Depends(get_current_user), db=Depends(get_db)):
         "default_extraction_model": (us.default_extraction_model if us else None) or system_default(),
         "default_chat_model": (us.default_chat_model if us else None) or system_default(),
         "require_byo_key": bool(policy.require_byo_key) if policy else False,
+        # "retrieval" -> chat answers come from the extracted graph, no LLM at
+        # query time, so the per-answer model picker is irrelevant.
+        "chat_mode": get_settings().chat_mode,
     }
 
 
@@ -275,6 +278,61 @@ def set_model_policy(org_id: str, body: ModelPolicyIn,
     db.merge(p)
     db.commit()
     invalidate_catalog()  # policy affects resolution; drop cache fleet-wide
+    return {"ok": True}
+
+
+@app.get("/api/admin/model-assignments")
+def admin_model_assignments(admin: User = Depends(require_role("admin")), db=Depends(get_db)):
+    """Configuration page data: every user in the org + their assigned models,
+    plus the org policy and the catalog (allowed models)."""
+    catalog = get_catalog()
+    policy = db.get(OrgModelPolicy, admin.org_id) if admin.org_id else None
+    allowed = set(policy.allowed_models) if policy and policy.allowed_models else {m["model_id"] for m in catalog}
+    models = [m for m in catalog if m["model_id"] in allowed]
+
+    users = db.scalars(select(User).where(User.org_id == admin.org_id).order_by(User.email)).all()
+    uids = [u.id for u in users]
+    settings = {s.user_id: s for s in db.scalars(
+        select(UserSettings).where(UserSettings.user_id.in_(uids))).all()} if uids else {}
+
+    return {
+        "org_id": admin.org_id,
+        "system_default": system_default(),
+        "models": models,
+        "policy": {
+            "allowed_models": policy.allowed_models if policy else [],
+            "default_extraction_model": policy.default_extraction_model if policy else None,
+            "default_chat_model": policy.default_chat_model if policy else None,
+            "require_byo_key": bool(policy.require_byo_key) if policy else False,
+        },
+        "users": [{
+            "id": u.id, "email": u.email, "name": u.name, "role": u.role,
+            "default_extraction_model": (settings.get(u.id).default_extraction_model if settings.get(u.id) else None),
+            "default_chat_model": (settings.get(u.id).default_chat_model if settings.get(u.id) else None),
+        } for u in users],
+    }
+
+
+@app.put("/api/admin/users/{user_id}/model-defaults")
+def admin_set_user_models(user_id: str, body: ModelDefaultsIn,
+                          admin: User = Depends(require_role("admin")), db=Depends(get_db)):
+    """Admin assigns a specific user's default models (EF-28). Empty string
+    clears the assignment → the user falls back to org/system default."""
+    target = db.get(User, user_id)
+    if not target or target.org_id != admin.org_id:
+        raise HTTPException(404, "user not found in this organization")
+    catalog_ids = {m["model_id"] for m in get_catalog()}
+    for m in (body.default_extraction_model, body.default_chat_model):
+        if m and m not in catalog_ids:
+            raise HTTPException(400, f"unknown model: {m}")
+    us = db.get(UserSettings, user_id) or UserSettings(user_id=user_id)
+    if body.default_extraction_model is not None:
+        us.default_extraction_model = body.default_extraction_model or None
+    if body.default_chat_model is not None:
+        us.default_chat_model = body.default_chat_model or None
+    db.merge(us)
+    db.commit()
+    audit("ADMIN_SET_USER_MODELS", admin=admin.id, target=user_id)
     return {"ok": True}
 
 

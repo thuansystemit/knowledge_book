@@ -28,6 +28,13 @@ class LoginIn(BaseModel):
     password: str
 
 
+def _secure_flag(cfg) -> bool:
+    # The refresh cookie is HttpOnly always. Mark it Secure when configured
+    # (COOKIE_SECURE, i.e. behind HTTPS) — and force Secure when SameSite=None,
+    # which browsers otherwise reject.
+    return cfg.cookie_secure or cfg.cookie_samesite.lower() == "none"
+
+
 def _issue_refresh(db: Session, user: User, resp: Response) -> None:
     cfg = get_settings()
     expires = datetime.now(timezone.utc) + timedelta(days=cfg.refresh_ttl_days)
@@ -36,7 +43,7 @@ def _issue_refresh(db: Session, user: User, resp: Response) -> None:
     db.commit()
     token = make_refresh(user.id, row.id)
     resp.set_cookie(
-        _COOKIE, token, httponly=True, secure=cfg.cookie_secure,
+        _COOKIE, token, httponly=True, secure=_secure_flag(cfg),
         samesite=cfg.cookie_samesite, max_age=cfg.refresh_ttl_days * 86400, path="/auth",
     )
 
@@ -81,7 +88,9 @@ def logout(resp: Response, kb_refresh: str | None = Cookie(default=None), db: Se
             if row:
                 row.revoked = True
                 db.commit()
-    resp.delete_cookie(_COOKIE, path="/auth")
+    cfg = get_settings()
+    resp.delete_cookie(_COOKIE, path="/auth", httponly=True,
+                       secure=_secure_flag(cfg), samesite=cfg.cookie_samesite)
     return {"ok": True}
 
 

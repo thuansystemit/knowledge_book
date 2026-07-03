@@ -27,6 +27,7 @@ export interface JobSummary {
 export interface JobDetail {
   job_id: string; title: string; status: string; error: string | null;
   events: StageEvent[]; graph: Graph | null; has_pdf?: boolean;
+  user_id?: string;   // owner — used to gate the Delete action (owner or admin)
 }
 export interface StageEvent {
   stage: string; status: string; detail?: string; index?: number; total?: number;

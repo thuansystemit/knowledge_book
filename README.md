@@ -25,14 +25,16 @@ their relationships with an LLM, and produces four outputs: a **Brief**, a
 The stack is a **React dashboard**, a **FastAPI** API, a **Celery worker** (durable
 extraction jobs), **Postgres**, and **Redis** (Celery broker + cross-replica SSE
 pub/sub + config cache), plus a pluggable **LLM provider** (local Ollama by
-default; Claude/OpenAI). Auth is JWT (in-memory access token + HttpOnly refresh
-cookie) with **RBAC** (admin / analyst / viewer), **multi-tenant** org scoping, and
-**per-category access control**.
+default; Claude/OpenAI) used for **extraction**. **Chat answers are composed from
+the extracted graph with no query-time LLM by default** (`CHAT_MODE=retrieval`);
+a generative LLM answer is opt-in (`CHAT_MODE=llm`). Auth is JWT (in-memory access
+token + HttpOnly refresh cookie) with **RBAC** (admin / analyst / viewer),
+**multi-tenant** org scoping, and **per-category access control**.
 
 ```mermaid
 flowchart TB
     subgraph Browser
-      UI["React dashboard (Vite + Bootstrap/Tailwind)<br/>Documents · Workflow · Graph · Chat · Source PDF · Admin"]
+      UI["React dashboard (Vite + Bootstrap/Tailwind)<br/>Documents · Workflow · Graph · Chat · Source PDF · Admin · Profile"]
     end
 
     subgraph Docker["Docker stack"]
@@ -55,7 +57,7 @@ flowchart TB
     RS -->|"SSE fan-out"| API
     WK -->|SQLAlchemy| DB
     WK -->|extract · brief| LLM
-    API -->|chat| LLM
+    API -.->|"chat — LLM mode only (opt-in)"| LLM
 ```
 
 **Ingestion pipeline** (background job, streamed live over SSE):
@@ -71,19 +73,25 @@ flowchart LR
     B --> G[("graph + brief<br/>persisted on the job")]
 ```
 
-**Chat** (grounded on the stored graph, streamed token-by-token):
+**Chat** (grounded on the stored graph; **no query-time LLM by default**):
 
 ```mermaid
 flowchart LR
     Q["question"] --> P["POST /chat<br/>save msg → stream-token"]
-    P --> S["build context<br/>graph slice: chapter-scope / keyword + edges + brief"]
-    S --> ST["provider.stream_chat<br/>(multi-turn history)"]
-    ST --> SSE["SSE tokens + citations<br/>→ Chat tab"]
+    P --> S["retrieve graph slice<br/>chapter-scope / keyword + edges + brief"]
+    S --> A["compose_answer<br/>deterministic template (default)"]
+    S -.-> L["provider.stream_chat<br/>opt-in: CHAT_MODE=llm"]
+    A --> SSE["SSE answer + citations<br/>→ Chat tab"]
+    L -.-> SSE
 ```
 
-> Grounding is **graph-only** today (no embeddings/RAG) — see
-> [`docs/FEATURE-document-chat.md`](docs/FEATURE-document-chat.md) for the
-> upgrade path to hybrid retrieval.
+> Grounding is **graph-only** (no embeddings/RAG). By default (`CHAT_MODE=retrieval`)
+> answers are composed deterministically from the extracted concepts, definitions,
+> relationships, and brief — instant, zero per-question LLM cost, and available to
+> **all roles** (read-only, gated by the same per-document ACL). Set `CHAT_MODE=llm`
+> for generative, multi-turn answers. See
+> [`docs/FEATURE-document-chat.md`](docs/FEATURE-document-chat.md) for the upgrade
+> path to hybrid retrieval.
 
 ---
 
@@ -95,14 +103,18 @@ flowchart LR
 - **Live workflow** — watch each stage stream over SSE (survives page refresh);
   **retry** just the failed chunks and merge them back in.
 - **Explore** — interactive concept **graph**, **Brief**, **Chat** with the
-  document (multi-turn, graph-grounded, cited), and a **Source-PDF viewer** with
-  zoom + page nav to compare answers against the original.
+  document (graph-grounded, cited; **retrieval by default — no per-question LLM**,
+  optional generative LLM mode), and a **Source-PDF viewer** with zoom + page nav
+  to compare answers against the original.
 - **Choose your model, per request** — free local `qwen2.5:3b` by default; pick a
-  premium model (Claude / GPT-4o) for extraction or chat. Config-as-data
-  (DB-resolved, **no restart**).
+  premium model (Claude / GPT-4o) for extraction (and chat in LLM mode).
+  Config-as-data (DB-resolved, **no restart**).
 - **Accounts & access** — login/logout (JWT + refresh), **RBAC** (admin/analyst/
   viewer), **multi-tenant** orgs, and **categories** with per-category
-  view/upload/manage **ACLs** (default-deny). Admin console for users + categories.
+  view/upload/manage **ACLs** (default-deny). Roles are enforced end-to-end: only
+  **admin/analyst** upload; only the **owner or admin** deletes; **all roles** can
+  view and chat documents they've been granted. Admin console for users +
+  categories, plus a per-user **profile** page (model preferences, sign out).
 - **Ops** — Postgres + Redis + Celery worker; per-user **rate limiting**.
 
 See [`docs/ENTERPRISE-productization.md`](docs/ENTERPRISE-productization.md) for the
@@ -160,8 +172,10 @@ category + model → upload a PDF → watch the workflow → explore Graph / Bri
 
 **LLM provider** is `.env`-driven and **per-request** (`ollama | claude | openai`),
 defaulting to the local Ollama model — switch per user/org with no restart
-(config-as-data). See `extraction-service/README.md` for details, and there's a
-no-auth **one-shot CLI** for scripting: `docker compose run --rm extractor`.
+(config-as-data). **Chat mode** is set with `CHAT_MODE` in `.env`: `retrieval`
+(default — answers composed from the graph, no query-time LLM) or `llm`
+(generative, multi-turn). See `extraction-service/README.md` for details, and
+there's a no-auth **one-shot CLI** for scripting: `docker compose run --rm extractor`.
 
 ---
 
@@ -173,7 +187,8 @@ independently-deployable order (see `docs/ARCHITECTURE-enterprise.md`):
 | Area | State |
 |---|---|
 | Core product | ✅ Ingestion → graph + Brief, live workflow, chat, source-PDF viewer |
-| Auth / RBAC | ✅ JWT + refresh, admin / analyst / viewer |
+| Chat | ✅ Graph-grounded; **retrieval (no LLM) by default**, generative LLM opt-in (`CHAT_MODE`) |
+| Auth / RBAC | ✅ JWT + refresh, admin / analyst / viewer — enforced on upload / delete / chat |
 | Durable jobs | ✅ Celery + Redis (survive restarts) + cross-replica SSE |
 | Rate limiting | ✅ Per-user, Redis-backed |
 | Multi-tenancy | ✅ Orgs + `org_id` (schema + backfill); airtight row-scoping is a follow-up |

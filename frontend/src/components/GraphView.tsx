@@ -2,16 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import type { Graph, GraphNode } from '../api/jobs.api';
 
-// Node colour by knowledge-graph type (app/domain/graph_schema.py).
+// Node colours — warm "Archivist" palette (terracotta, tan, dusty-pink, olive…).
 const TYPE_COLORS: Record<string, string> = {
-  Concept: '#6366f1',
-  Principle: '#10b981',
-  Term: '#0ea5e9',
-  Example: '#f59e0b',
-  Person: '#f43f5e',
-  Tool: '#8b5cf6',
+  Concept:   '#b5551f',  // terracotta (primary document / concept node)
+  Principle: '#8f9c6c',  // olive green
+  Term:      '#c9bb96',  // warm tan
+  Example:   '#e8b4b8',  // dusty pink
+  Person:    '#c47f5c',  // mid rust-orange
+  Tool:      '#a89070',  // warm brown
 };
-const DIM = '#e2e8f0';
+const DIM = '#e5ddd5';  // warm border color for dimmed links
 
 export function GraphView({ graph }: { graph: Graph }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -55,10 +55,11 @@ export function GraphView({ graph }: { graph: Graph }) {
 
   return (
     <div className="graph-wrap" ref={wrapRef}>
-      <div className="d-flex flex-wrap gap-3 mb-2 small text-secondary fw-semibold">
+      <div className="graph-legend">
         {Object.entries(TYPE_COLORS).map(([t, c]) => (
-          <span key={t} className="d-inline-flex align-items-center gap-1">
-            <span className="rounded-circle d-inline-block" style={{ width: 10, height: 10, background: c }} /> {t}
+          <span key={t} className="graph-legend-item">
+            <span className="graph-legend-dot" style={{ background: c }}></span>
+            {t}
           </span>
         ))}
       </div>
@@ -81,8 +82,8 @@ export function GraphView({ graph }: { graph: Graph }) {
           ctx.fillStyle = TYPE_COLORS[n.type] ?? '#64748b';
           ctx.fill();
           if (scale > 1.5 && on) {
-            ctx.fillStyle = '#0f172a';
-            ctx.font = `${11 / scale}px Inter, sans-serif`;
+            ctx.fillStyle = '#1c1208';
+            ctx.font = `600 ${11 / scale}px 'Playfair Display', Georgia, serif`;
             ctx.fillText(n.name, n.x + r + 1, n.y + 3);
           }
           ctx.globalAlpha = 1;
