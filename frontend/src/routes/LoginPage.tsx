@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { login } from '../api/auth.api';
 import { useAuthStore } from '../store/authStore';
 import { APP_NAME } from '../lib/constants';
+import { AppFooter } from '../components/AppFooter';
 
 export function LoginPage() {
   const setAuth = useAuthStore((s) => s.setAuth);
@@ -29,6 +30,8 @@ export function LoginPage() {
 
   return (
     <div className="login-wrap">
+      {/* Flex-grow region that centers the login card */}
+      <div className="login-main">
       <div className="login-card">
         <div className="login-brand">{APP_NAME}</div>
         <p className="page-subtitle" style={{ marginBottom: '1.75rem' }}>
@@ -91,6 +94,8 @@ export function LoginPage() {
           </button>
         </form>
       </div>
+      </div>{/* /login-main */}
+      <AppFooter />
     </div>
   );
 }

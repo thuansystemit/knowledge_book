@@ -875,12 +875,24 @@ a:hover { color: var(--brand-hover); }
 }
 
 /* ── Login page ─────────────────────────────────────────────────────── */
+/*
+ * Column flex so the footer sits pinned at the bottom of the viewport.
+ * The inner .login-main region takes all remaining height (flex:1) and
+ * centers the card both axes — same visual result as before for the card.
+ */
 .login-wrap {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+}
+
+/* Grows to fill space above the footer; centers the login card */
+.login-main {
+  flex: 1;
+  display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--canvas);
   padding: 1.5rem;
 }
 .login-card {
@@ -1196,4 +1208,89 @@ mark.hl-tan   { background: rgba(185,172,130,.28); border-radius: 3px; padding: 
   .ui-select-panel { animation: none; }
   .ui-select-chevron { transition: none; }
   * { transition-duration: 0.01ms !important; }
+}
+
+/* ── Confirm dialog ─────────────────────────────────────────────────── */
+/*
+  Self-contained React portal modal — no Bootstrap JS required.
+  Reuses Archivist design tokens. Sits above the app shell (z-index: 1050).
+*/
+
+/* Full-viewport dimmed backdrop — clicking it cancels the dialog */
+.modal-backdrop-kb {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 18, 8, 0.45);
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  animation: kb-backdrop-in 0.15s ease;
+}
+
+@keyframes kb-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Dialog card — warm surface, rounded, shadow */
+.confirm-dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  padding: 2rem 2rem 1.5rem;
+  max-width: 420px;
+  width: 100%;
+  animation: kb-dialog-in 0.18s ease;
+}
+
+@keyframes kb-dialog-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+/* Serif title — smaller than .page-title but same family */
+.confirm-dialog-title {
+  font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.25;
+  margin: 0 0 0.75rem;
+}
+
+/* Body message */
+.confirm-dialog-message {
+  font-size: 0.875rem;
+  color: var(--body);
+  line-height: 1.6;
+  margin: 0 0 1.5rem;
+}
+
+/* Button row — Cancel left-ish, Confirm right */
+.confirm-actions {
+  display: flex;
+  gap: 0.625rem;
+  justify-content: flex-end;
+}
+
+/* Danger confirm button — warm red, on-brand, pill shape via .btn */
+.confirm-btn-danger {
+  --bs-btn-bg:               #c0392b;
+  --bs-btn-border-color:     #c0392b;
+  --bs-btn-color:            #ffffff;
+  --bs-btn-hover-bg:         #a93226;
+  --bs-btn-hover-border-color: #a93226;
+  --bs-btn-active-bg:        #922b21;
+  --bs-btn-active-border-color: #922b21;
+  --bs-btn-focus-shadow-rgb: 192, 57, 43;
+  font-weight: 600;
+}
+
+/* Respect reduced-motion for dialog animations */
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop-kb { animation: none; }
+  .confirm-dialog    { animation: none; }
 }

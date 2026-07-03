@@ -7,6 +7,7 @@ import {
 import { listUsers, type AdminUser } from '../../api/users.api';
 import { getApiError } from '../../lib/utils';
 import { Select } from '../../components/Select';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 
 const GRANTS = ['view', 'upload', 'manage'];
 
@@ -22,6 +23,9 @@ export function CategoriesPage() {
   const [grantErr, setGrantErr] = useState<string | null>(null);
   // Cache perms per category for table display
   const [catPerms, setCatPerms] = useState<Record<string, CatPermission[]>>({});
+  // Confirm-delete dialog state
+  const [deleteCat, setDeleteCat] = useState<Category | null>(null);
+  const [deleteCatBusy, setDeleteCatBusy] = useState(false);
 
   const load = () =>
     listCategories().then((cs) => {
@@ -51,14 +55,22 @@ export function CategoriesPage() {
     }
   };
 
-  const remove = async (c: Category) => {
-    if (!confirm(`Delete category "${c.name}"?`)) return;
+  /** Opens the confirm dialog — actual deletion runs in confirmRemove. */
+  const remove = (c: Category) => setDeleteCat(c);
+
+  const confirmRemove = async () => {
+    if (!deleteCat) return;
+    setDeleteCatBusy(true);
     try {
-      await deleteCategory(c.id);
-      if (manage?.id === c.id) setManage(null);
+      await deleteCategory(deleteCat.id);
+      if (manage?.id === deleteCat.id) setManage(null);
+      setDeleteCat(null);
       load();
     } catch (e: unknown) {
+      setDeleteCat(null);
       alert(getApiError(e, 'Failed to delete'));
+    } finally {
+      setDeleteCatBusy(false);
     }
   };
 
@@ -314,6 +326,17 @@ export function CategoriesPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteCat !== null}
+        title={`Delete "${deleteCat?.name ?? ''}"?`}
+        message="This category will be permanently removed. Documents filed under it will not be deleted."
+        confirmLabel="Delete"
+        danger
+        busy={deleteCatBusy}
+        onConfirm={confirmRemove}
+        onCancel={() => setDeleteCat(null)}
+      />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useAuthStore } from './store/authStore';
 import { AppLayout } from './components/AppLayout';
 import { PageSpinner } from './components/PageSpinner';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { PublicLayout } from './components/PublicLayout';
 import { LoginPage } from './routes/LoginPage';
 import { DocumentsPage } from './routes/DocumentsPage';
 import { UploadPage } from './routes/UploadPage';
@@ -45,16 +46,19 @@ export default function App() {
           <Route element={<ProtectedRoute roles={['admin', 'analyst']} />}>
             <Route path="/documents/new" element={<UploadPage />} />
           </Route>
-          {/*
-           * Legal pages are inside the authenticated shell so they get the
-           * nav + footer and stay consistent with the rest of the app.
-           * If these pages should be publicly accessible (pre-login), move
-           * these three routes outside the <ProtectedRoute> wrapper.
-           */}
-          <Route path="/about"   element={<AboutPage />} />
-          <Route path="/privacy" element={<PrivacyPage />} />
-          <Route path="/terms"   element={<TermsPage />} />
         </Route>
+      </Route>
+
+      {/*
+       * Legal pages are intentionally PUBLIC — no authentication required.
+       * They are reachable from the AppFooter on the login page as well as
+       * from within the authenticated app. PublicLayout renders a minimal
+       * branded chrome (wordmark + footer) without any user-specific nav.
+       */}
+      <Route element={<PublicLayout />}>
+        <Route path="/about"   element={<AboutPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms"   element={<TermsPage />} />
       </Route>
 
       <Route element={<ProtectedRoute roles={['admin']} />}>

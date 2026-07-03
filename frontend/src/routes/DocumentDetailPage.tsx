@@ -8,6 +8,7 @@ import { GraphView } from '../components/GraphView';
 import { WorkflowStages } from '../components/WorkflowStages';
 import { ChatTab } from '../components/ChatTab';
 import { DocumentViewer } from '../components/DocumentViewer';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAuthStore } from '../store/authStore';
 import { getApiError } from '../lib/utils';
 
@@ -30,6 +31,8 @@ export function DocumentDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [busy, setBusy] = useState(false);
   const [graphMode, setGraphMode] = useState<'graph' | 'list'>('graph');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const unsubRef = useRef<(() => void) | undefined>(undefined);
 
   const load = useCallback(() => {
@@ -65,13 +68,20 @@ export function DocumentDetailPage() {
     try { await retryFailed(id); load(); } finally { setBusy(false); }
   };
 
-  const onDelete = async () => {
-    if (!id || !confirm('Delete this document?')) return;
+  /** Opens the confirm dialog — the actual deletion runs in confirmDelete. */
+  const onDelete = () => setDeleteDialogOpen(true);
+
+  const confirmDelete = async () => {
+    if (!id) return;
+    setDeleteBusy(true);
     try {
       await deleteJob(id);
       navigate('/documents', { replace: true });
     } catch (e: unknown) {
+      setDeleteDialogOpen(false);
       alert(getApiError(e, 'Failed to delete document'));
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -400,6 +410,17 @@ export function DocumentDetailPage() {
           ) : null}
         </>
       )}
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        title="Delete document?"
+        message={`"${job.title}" will be permanently deleted and cannot be recovered.`}
+        confirmLabel="Delete"
+        danger
+        busy={deleteBusy}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteDialogOpen(false)}
+      />
     </div>
   );
 }

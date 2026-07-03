@@ -116,9 +116,11 @@ flowchart LR
   view and chat documents they've been granted. Admin console for users +
   categories, plus a per-user **profile** page (model preferences, sign out)
   reached from an **avatar dropdown** (view profile / logout).
-- **App shell** — top navigation + a site **footer** linking **About**,
-  **Privacy**, and **Terms & Conditions** pages (legal copy is a placeholder to be
-  reviewed by counsel).
+- **App shell** — top navigation + a site **footer** (also shown on the login
+  page) linking **public** **About**, **Privacy**, and **Terms & Conditions**
+  pages (reachable without signing in; legal copy is a placeholder to be reviewed
+  by counsel). Destructive actions (delete document/category) require an on-theme
+  **confirmation dialog**.
 - **Ops** — Postgres + Redis + Celery worker; per-user **rate limiting**.
 
 See [`docs/ENTERPRISE-productization.md`](docs/ENTERPRISE-productization.md) for the
