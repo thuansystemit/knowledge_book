@@ -13,12 +13,14 @@ export interface Brief {
   thesis?: string; core_concepts?: string[]; key_principles?: string[];
   audience?: string; summary?: string;
 }
+export interface Paywall { capped: boolean; concepts_shown: number; concepts_total: number; }
 export interface Graph {
   nodes: GraphNode[]; edges: GraphEdge[];
   stats: { node_count: number; edge_count: number };
   document?: { title: string; pdf_type: string; pages_chunked: number };
   warnings?: string[]; brief?: Brief | null;
   failed_chunks?: unknown[];
+  paywall?: Paywall;   // set when the Free tier caps the concept map (PAY-01)
 }
 export interface JobSummary {
   job_id: string; title: string; status: string;

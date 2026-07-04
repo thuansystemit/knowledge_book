@@ -67,6 +67,30 @@ class Settings:
     # Rate limits per user (0 = disabled). Redis-backed, works across replicas.
     rate_upload_per_hour: int = field(default_factory=lambda: int(os.environ.get("RATE_UPLOAD_PER_HOUR", "30")))
     rate_chat_per_min: int = field(default_factory=lambda: int(os.environ.get("RATE_CHAT_PER_MIN", "20")))
+
+    # --- Subscription plans (monetization-pricing.md; PAY-01/02/03) ----------
+    # Monthly document quota per consumer plan (0 = unlimited). Enforced per
+    # calendar month, per user. Admins are exempt (super-user). Env-tunable so
+    # pricing experiments need no code change.
+    plan_free_docs: int = field(default_factory=lambda: int(os.environ.get("PLAN_FREE_DOCS", "2")))
+    plan_pro_docs: int = field(default_factory=lambda: int(os.environ.get("PLAN_PRO_DOCS", "20")))
+    plan_scholar_docs: int = field(default_factory=lambda: int(os.environ.get("PLAN_SCHOLAR_DOCS", "60")))
+    # Concept-map cap on the Free tier (0 = uncapped). Applied at serving time,
+    # so an upgrade instantly reveals the full map with no reprocessing (PAY-01).
+    plan_free_concepts: int = field(default_factory=lambda: int(os.environ.get("PLAN_FREE_CONCEPTS", "10")))
+
+    # --- Stripe billing (PAY-04) --------------------------------------------
+    # All optional: if the secret key is blank, billing endpoints return 503 and
+    # the app still boots (on-prem/enterprise deploys need no Stripe). Price IDs
+    # come from the Stripe dashboard; map (plan, interval) -> price.
+    stripe_secret_key: str = field(default_factory=lambda: os.environ.get("STRIPE_SECRET_KEY", ""))
+    stripe_webhook_secret: str = field(default_factory=lambda: os.environ.get("STRIPE_WEBHOOK_SECRET", ""))
+    stripe_price_pro_monthly: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_PRO_MONTHLY", ""))
+    stripe_price_pro_annual: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_PRO_ANNUAL", ""))
+    stripe_price_scholar_monthly: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_SCHOLAR_MONTHLY", ""))
+    stripe_price_scholar_annual: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_SCHOLAR_ANNUAL", ""))
+    # Where Stripe redirects after checkout (success/cancel) — the SPA origin.
+    frontend_base_url: str = field(default_factory=lambda: os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173"))
     jwt_secret: str = field(default_factory=lambda: os.environ.get("JWT_SECRET", "dev-secret-change-me"))
     access_ttl_min: int = field(default_factory=lambda: int(os.environ.get("ACCESS_TTL_MIN", "15")))
     refresh_ttl_days: int = field(default_factory=lambda: int(os.environ.get("REFRESH_TTL_DAYS", "7")))

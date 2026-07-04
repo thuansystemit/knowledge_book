@@ -11,6 +11,7 @@ import { DocumentViewer } from '../components/DocumentViewer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAuthStore } from '../store/authStore';
 import { getApiError } from '../lib/utils';
+import { getActivationStatus, recordRating, recordView } from '../api/activation.api';
 
 type Tab = 'brief' | 'graph' | 'chat' | 'document';
 
@@ -34,6 +35,14 @@ export function DocumentDetailPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const unsubRef = useRef<(() => void) | undefined>(undefined);
+
+  // Activation instrumentation (ACT-01/02): one session id per visit, fire the
+  // Concept-Map view event once, and track whether the user has rated.
+  const sessionIdRef = useRef<string>('');
+  if (!sessionIdRef.current) sessionIdRef.current = crypto.randomUUID();
+  const viewFiredRef = useRef(false);
+  const [rated, setRated] = useState<boolean | null>(null);
+  const [ratingBusy, setRatingBusy] = useState(false);
 
   const load = useCallback(() => {
     if (!id) return;
@@ -61,6 +70,24 @@ export function DocumentDetailPage() {
     const cleanup = load();
     return () => { cleanup?.(); unsubRef.current?.(); };
   }, [load]);
+
+  // Fire the Concept-Map view event once the graph is ready, and load whether
+  // the user has already rated (to show/hide the thumbs prompt). ACT-01/02.
+  useEffect(() => {
+    if (!id || viewFiredRef.current) return;
+    if (job?.status === 'done' && job.graph) {
+      viewFiredRef.current = true;
+      recordView(id, sessionIdRef.current).catch(() => {});
+      getActivationStatus(id).then((s) => setRated(s.rated)).catch(() => setRated(false));
+    }
+  }, [id, job?.status, job?.graph]);
+
+  const onRate = async (rating: 'up' | 'down') => {
+    if (!id) return;
+    setRatingBusy(true);
+    try { await recordRating(id, rating); setRated(true); }
+    finally { setRatingBusy(false); }
+  };
 
   const onRetry = async () => {
     if (!id) return;
@@ -323,6 +350,37 @@ export function DocumentDetailPage() {
                       </button>
                     </div>
                   </div>
+
+                  {/* Free-tier concept-map cap (PAY-01) */}
+                  {g.paywall?.capped && (
+                    <div className="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2" role="status">
+                      <span>
+                        Showing <strong>{g.paywall.concepts_shown}</strong> of{' '}
+                        <strong>{g.paywall.concepts_total}</strong> concepts on the Free plan.
+                      </span>
+                      <Link to="/billing" className="btn btn-primary btn-sm">
+                        See all {g.paywall.concepts_total} on Pro
+                      </Link>
+                    </div>
+                  )}
+
+                  {/* Concept-map rating prompt (ACT-02) — shown once per user/doc */}
+                  {rated === false && (
+                    <div className="alert alert-light border d-flex align-items-center justify-content-between flex-wrap gap-2" role="group" aria-label="Rate the concept list">
+                      <span style={{ color: 'var(--ink)' }}>Are these the right concepts?</span>
+                      <div className="d-flex gap-2">
+                        <button className="btn btn-outline-success btn-sm" onClick={() => onRate('up')} disabled={ratingBusy} aria-label="Thumbs up">
+                          <i className="bi bi-hand-thumbs-up" aria-hidden="true" /> Yes
+                        </button>
+                        <button className="btn btn-outline-secondary btn-sm" onClick={() => onRate('down')} disabled={ratingBusy} aria-label="Thumbs down">
+                          <i className="bi bi-hand-thumbs-down" aria-hidden="true" /> Not quite
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {rated === true && (
+                    <p className="form-text" style={{ marginTop: '-0.25rem' }}>Thanks for the feedback.</p>
+                  )}
 
                   {graphMode === 'graph' ? (
                     <GraphView graph={g} />

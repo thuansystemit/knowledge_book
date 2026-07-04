@@ -146,6 +146,15 @@ export function AppLayout() {
                   type="button"
                   className="dropdown-item d-flex align-items-center gap-2 w-100 text-start border-0 bg-transparent"
                   role="menuitem"
+                  onClick={() => { setMenuOpen(false); navigate('/billing'); }}
+                >
+                  <i className="bi bi-credit-card"></i>
+                  Billing &amp; plan
+                </button>
+                <button
+                  type="button"
+                  className="dropdown-item d-flex align-items-center gap-2 w-100 text-start border-0 bg-transparent"
+                  role="menuitem"
                   onClick={onLogout}
                 >
                   <i className="bi bi-box-arrow-right"></i>

@@ -43,6 +43,43 @@
 
 ---
 
+## Reconciliation Note (2026-07-04)
+
+This tracker was authored greenfield, but a gap analysis against the existing codebase
+(`extraction-service/`, `frontend/`, `spike/`) shows much of the pipeline backbone is
+**already built** and, in places, ahead of the MVP (multi-tenant orgs, RBAC, categories):
+
+- **Built (pre-existing):** ingestion classify/extract/chunk (ING-01–08 core), per-chunk
+  LLM extraction + graph merge (EXT-01/03/04, GRP-01–03), Brief + chat/Q&A (OUT-01/04/05),
+  auth + per-user isolation (AUTH-01/02), upload UI + live progress (UI-01–02), multi-provider
+  LLM layer, observability, Redis rate-limiting. These need **acceptance-gate verification**,
+  not fresh construction — treat their rows as "In Progress → verify" rather than "Not Started".
+- **Genuinely missing (the commercial/MVP layer):** consumer subscription tiers + monthly
+  quota (PAY-01–03), Stripe (PAY-04), activation events (ACT-01–03), OCR low-confidence gate
+  (ING-06), per-doc cost ledger + cap (EXT-02).
+
+**Increments landed (top-down from the monetization spine):**
+1. **PAY-01/02/03** — Free/Pro/Scholar plan field on `User`, env-tunable monthly upload quota
+   (2/20/60), enforcement in `POST /api/jobs` (402 + upgrade message; admins exempt),
+   `GET /api/usage` meter endpoint, idempotent `run_plans()` migration. See `app/plans.py`.
+2. **PAY-04** — Stripe subscription billing: `POST /billing/checkout` + `/portal`,
+   signature-verified `/webhook` that syncs `plan`/`plan_status` from Stripe events,
+   `GET /billing/config`. Config-gated (503 when `STRIPE_SECRET_KEY` unset; app still boots).
+   See `app/billing.py`, `app/billing_routes.py`. Setup: `docs/STRIPE-setup.md`.
+3. **Billing UI (PAY-06 partial)** — `/billing` plans page (usage meter + Free/Pro/Scholar
+   cards + monthly/annual toggle + checkout/portal), `/billing/success` (polls `/auth/me`)
+   and `/billing/cancel`, "Billing & plan" in the user menu. See `frontend/src/routes/BillingPage.tsx`,
+   `BillingResultPage.tsx`, `frontend/src/api/billing.api.ts`.
+4. **PAY-01 completed** — Free tier is digital-only (`enforce_scanned_allowed`, classify-at-upload)
+   and the concept map caps at `PLAN_FREE_CONCEPTS` (10) with a "See all N on Pro" banner
+   (`apply_free_tier_caps`, `DocumentDetailPage`).
+5. **ACT-01/02/03** — activation instrumentation: `ActivationEvent` table + `/api/activation/*`
+   (view, rate, status, admin summary), Concept-Map view event + thumbs prompt in `DocumentDetailPage`,
+   Q&A event hooked into the chat handler. Live end-to-end tested. See `app/activation.py`,
+   `app/activation_routes.py`, `frontend/src/api/activation.api.ts`.
+
+---
+
 ## Part 1 — Spikes & Blocking Decisions
 
 These four items from PRD §10 are **blocking** — they must be resolved before the work they gate can start. They are not features; they are information purchases.
@@ -133,10 +170,10 @@ Paywall enforcement is an MVP requirement if soft launch is the target end of Sp
 
 | ID | Feature / Task | Category | Priority | Phase / Sprint | Owner | Status | Acceptance Criteria | Dependencies |
 |---|---|---|---|---|---|---|---|---|
-| PAY-01 | Free tier enforcement: 2 digital uploads/month; scanned PDFs blocked; Concept Map capped at 10 concepts; Chapter Guide and Q&A withheld; document library shows last 2 docs | Paywall | Must | Sprint 4 | E1 | Not Started | A Free user who attempts a 3rd upload this month sees a clear upgrade prompt, not an error; scanned PDF upload attempt surfaces "upgrade to Pro" messaging; Concept Map UI renders only 10 concepts with a "See all 25 on Pro" prompt | AUTH-01, OUT-02, OUT-03, OUT-05 |
-| PAY-02 | Pro tier enforcement: 20 combined uploads/month; all 4 outputs at full fidelity; export; unlimited library; credit add-ons available | Paywall | Must | Sprint 4 | E1 | Not Started | A Pro user can upload up to 20 docs/month (any type); sees full Concept Map, Chapter Guide, Q&A, and export; hitting the 20-doc ceiling surfaces a credit add-on prompt | AUTH-01, PAY-04 |
-| PAY-03 | Scholar tier enforcement: 60 combined uploads/month; priority queue flag; Phase-2 early-access flag (record but no feature yet) | Paywall | Must | Sprint 4 | E1 | Not Started | Scholar users' jobs are flagged for priority processing; ceiling is 60/month; early-access flag stored on user record for future use | AUTH-01, PAY-04 |
-| PAY-04 | Stripe integration: checkout for Pro/Scholar monthly + annual plans; webhook handling for subscription lifecycle (created, cancelled, payment failed) | Paywall | Must | Sprint 4–5 | E1 | Not Started | A user can upgrade from Free to Pro via a Stripe-hosted checkout; subscription status is synced to the user record via webhook; downgrade returns the user to Free tier limits | AUTH-01 |
+| PAY-01 | Free tier enforcement: 2 digital uploads/month; scanned PDFs blocked; Concept Map capped at 10 concepts; Chapter Guide and Q&A withheld; document library shows last 2 docs | Paywall | Must | Sprint 4 | E1 | Done | A Free user who attempts a 3rd upload this month sees a clear upgrade prompt, not an error; scanned PDF upload attempt surfaces "upgrade to Pro" messaging; Concept Map UI renders only 10 concepts with a "See all 25 on Pro" prompt. **Done:** monthly upload-count quota + 402 upgrade message; scanned/hybrid-PDF block on Free (`enforce_scanned_allowed`); Concept-Map 10-cap at serve time + paywall banner (`apply_free_tier_caps`, `PLAN_FREE_CONCEPTS`, banner in `DocumentDetailPage`). Needs live acceptance-gate verification | AUTH-01, OUT-02, OUT-03, OUT-05 |
+| PAY-02 | Pro tier enforcement: 20 combined uploads/month; all 4 outputs at full fidelity; export; unlimited library; credit add-ons available | Paywall | Must | Sprint 4 | E1 | In Progress | A Pro user can upload up to 20 docs/month (any type); sees full Concept Map, Chapter Guide, Q&A, and export; hitting the 20-doc ceiling surfaces a credit add-on prompt. **Done:** 20-doc/mo quota enforced. **Remaining:** credit add-on prompt (depends PAY-05) | AUTH-01, PAY-04 |
+| PAY-03 | Scholar tier enforcement: 60 combined uploads/month; priority queue flag; Phase-2 early-access flag (record but no feature yet) | Paywall | Must | Sprint 4 | E1 | In Progress | Scholar users' jobs are flagged for priority processing; ceiling is 60/month; early-access flag stored on user record for future use. **Done:** 60-doc/mo quota enforced. **Remaining:** priority-queue flag, early-access flag on user record | AUTH-01, PAY-04 |
+| PAY-04 | Stripe integration: checkout for Pro/Scholar monthly + annual plans; webhook handling for subscription lifecycle (created, cancelled, payment failed) | Paywall | Must | Sprint 4–5 | E1 | In Progress | A user can upgrade from Free to Pro via a Stripe-hosted checkout; subscription status is synced to the user record via webhook; downgrade returns the user to Free tier limits. **Done:** `POST /billing/checkout` (hosted subscription checkout, monthly+annual), `POST /billing/portal`, signature-verified `POST /billing/webhook` syncing plan on checkout-completed / subscription-updated / subscription-deleted, `GET /billing/config` (`app/billing.py`, `app/billing_routes.py`). **Remaining:** live Stripe price IDs in `.env`; frontend upgrade buttons + success/cancel pages | AUTH-01 |
 | PAY-05 | Credit add-on purchase: 5-doc and 10-doc packs purchasable by Pro/Scholar users; credits never expire; applied to the user's monthly quota | Paywall | Should | Sprint 5 | E1 | Not Started | A Pro user can purchase a 5-doc pack; credits are added to their account and consumed before the plan's monthly allotment runs out; credits persist across billing cycles | PAY-04 |
 | PAY-06 | Upgrade prompts and paywall UI: contextual prompts at every paywall gate (upload limit, concept count, Q&A, Chapter Guide, export) | Paywall | Must | Sprint 4 | E1 | Not Started | Every blocked action surfaces a specific, contextual upgrade message (not a generic "upgrade" modal); Free users who click "ask a question" see a message tied to Q&A specifically; conversion to upgrade click is tracked | PAY-01, PAY-02, ACT-03 |
 | PAY-07 | Student discount mechanics (3 months free Pro for verified .edu email) | Paywall | Could | Sprint 5 (if capacity) | E1 | Not Started | Assumption: honor-system .edu email check is acceptable for MVP; if so: users who sign up with a .edu email are offered 3 months free Pro at account creation; requires Product decision on verification method | AUTH-01, PAY-04 |
@@ -149,9 +186,9 @@ These items must be wired **before soft launch** (end of Sprint 5). They feed th
 
 | ID | Feature / Task | Category | Priority | Phase / Sprint | Owner | Status | Acceptance Criteria | Dependencies |
 |---|---|---|---|---|---|---|---|---|
-| ACT-01 | Concept Map view event: fire a server-side event when a user first loads the Concept Map for a document; store `(user_id, doc_id, timestamp)` | Activation | Must | Sprint 4 | E1 | Not Started | Every unique Concept Map page-view is recorded; the event is queryable for the activation rate dashboard; no PII beyond user_id | OUT-02, AUTH-01 |
-| ACT-02 | Concept Map rating prompt: after the Concept Map loads, show a single thumbs-up/thumbs-down prompt ("Are these the right concepts?"); record result | Activation | Must | Sprint 4 | E1 | Not Started | The prompt appears exactly once per doc per user (not on every revisit); result is stored and queryable; the PRD target of ≥ 70% thumbs-up can be measured from this data | ACT-01 |
-| ACT-03 | Q&A session tracking: record whether a user asks ≥1 Q&A question in the same session as viewing the Concept Map | Activation | Must | Sprint 4 | E1 | Not Started | Co-session Q&A usage is queryable by session; PRD target of ≥ 50% of Concept Map viewers using Q&A in the same session can be measured | ACT-01, OUT-05 |
+| ACT-01 | Concept Map view event: fire a server-side event when a user first loads the Concept Map for a document; store `(user_id, doc_id, timestamp)` | Activation | Must | Sprint 4 | E1 | Done | Every unique Concept Map page-view is recorded; the event is queryable for the activation rate dashboard; no PII beyond user_id. **Done:** `POST /api/activation/view` fired once per visit from `DocumentDetailPage`; `ActivationEvent(kind=view)` idempotent per user/job (`app/activation.py`). Live-tested | OUT-02, AUTH-01 |
+| ACT-02 | Concept Map rating prompt: after the Concept Map loads, show a single thumbs-up/thumbs-down prompt ("Are these the right concepts?"); record result | Activation | Must | Sprint 4 | E1 | Done | The prompt appears exactly once per doc per user (not on every revisit); result is stored and queryable; the PRD target of ≥ 70% thumbs-up can be measured from this data. **Done:** thumbs up/down prompt in the graph tab, shown only when `status.rated` is false; `POST /api/activation/rate`; `thumbs_up_rate` in `/summary`. Live-tested | ACT-01 |
+| ACT-03 | Q&A session tracking: record whether a user asks ≥1 Q&A question in the same session as viewing the Concept Map | Activation | Must | Sprint 4 | E1 | Done | Co-session Q&A usage is queryable by session; PRD target of ≥ 50% of Concept Map viewers using Q&A in the same session can be measured. **Done:** `record_qa` fired server-side from the chat `ask` handler (idempotent per user/job); `qa_cosession_rate` (views that also have a qa) in `/summary`. Note: "co-session" approximated as same (user, doc) rather than a shared session id. Live-tested | ACT-01, OUT-05 |
 | ACT-04 | Per-document cost telemetry: cost ledger values surfaced to an internal ops dashboard (not user-facing) | Observability | Must | Sprint 2 | E1 | Not Started | Any team member can query total cost + per-stage cost for any processed document; alerts fire if per-doc cost exceeds 80% of the cap | EXT-02 |
 | ACT-05 | Stage latency metrics: record wall-clock duration for each state-machine transition; surface p50/p90 per stage to an internal dashboard | Observability | Must | Sprint 4–5 | E1 | Not Started | p90 latency per stage is visible in the dashboard; alerts fire if digital-doc end-to-end p90 exceeds 5 min or scanned p90 exceeds 12 min | ING-02 |
 | ACT-06 | OCR confidence distribution: record per-page OCR confidence scores; histogram visible in internal dashboard | Observability | Should | Sprint 5 | E1 | Not Started | For any scanned doc, the confidence distribution is queryable; the % of docs triggering the low-confidence banner is tracked week-over-week | ING-06 |

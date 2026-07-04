@@ -5,6 +5,9 @@ export interface User {
   email: string;
   name: string;
   role: 'admin' | 'analyst' | 'viewer';
+  // Consumer subscription plan (PAY-01/02/03) — orthogonal to `role`.
+  plan?: 'free' | 'pro' | 'scholar';
+  plan_status?: 'none' | 'active' | 'past_due' | 'canceled';
   is_active: boolean;
   created_at?: string;
 }

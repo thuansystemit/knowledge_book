@@ -49,13 +49,21 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(120), default="")
     role: Mapped[str] = mapped_column(String(16), default="analyst")
+    # Consumer subscription plan (monetization-pricing.md; PAY-01/02/03).
+    # Orthogonal to `role` (RBAC): governs monthly upload quota, not permissions.
+    plan: Mapped[str] = mapped_column(String(16), default="free")  # free|pro|scholar
+    # Stripe billing linkage (PAY-04). Set by checkout + kept in sync by webhooks.
+    plan_status: Mapped[str] = mapped_column(String(20), default="none")  # none|active|past_due|canceled
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     def public(self) -> dict:
         return {
             "id": self.id, "email": self.email, "name": self.name,
-            "role": self.role, "is_active": self.is_active,
+            "role": self.role, "plan": self.plan, "plan_status": self.plan_status,
+            "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -104,6 +112,26 @@ class DocumentFile(Base):
     filename: Mapped[str] = mapped_column(String(255), default="document.pdf")
     mime: Mapped[str] = mapped_column(String(100), default="application/pdf")
     data: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ActivationEvent(Base):
+    """Activation instrumentation for the GTM launch gates (ACT-01/02/03).
+
+    One row per (user, job, kind); kinds are `view` (Concept Map first viewed),
+    `rating` (thumbs up/down on the concept list), and `qa` (asked ≥1 Q&A on the
+    doc). Idempotent per kind so the activation rate is a clean count of pairs.
+    A doc is "activated" when a `view` pair also has a `rating` or a `qa`."""
+    __tablename__ = "activation_events"
+    __table_args__ = (UniqueConstraint("user_id", "job_id", "kind", name="uq_activation_user_job_kind"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(16))          # view | rating | qa
+    value: Mapped[str | None] = mapped_column(String(16), nullable=True)  # rating: up|down
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

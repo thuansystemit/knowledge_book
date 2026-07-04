@@ -26,16 +26,22 @@ from sqlalchemy import or_, select
 from app import job_events
 from app.access import general_category_id, require_category, require_job_access, visible_category_ids
 from app.admin_routes import router as admin_router
+from app.activation_routes import router as activation_router
 from app.auth_routes import router as auth_router
+from app.billing_routes import router as billing_router
 from app.category_routes import router as category_router
 from app.chat_routes import router as chat_router
 from app.config import get_settings
 from app.db import Base, engine, get_db, session_scope
 from app.deps import get_current_user, require_role
-from app.migrations import run_categories, run_models, run_tenancy
+from app.migrations import run_categories, run_models, run_plans, run_tenancy
 from app.model_resolver import get_catalog, invalidate_catalog, resolve as resolve_model, system_default
 from app.models import DocumentFile, Job, OrgModelPolicy, User, UserSettings
 from app.observability import audit
+from app.plans import (
+    apply_free_tier_caps, enforce_scanned_allowed, enforce_upload_quota,
+    usage as plan_usage,
+)
 from app.ratelimit import upload_limit
 from app.security import hash_password, make_stream, safe_decode
 from app.tasks import retry_extraction, run_extraction
@@ -54,11 +60,17 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(chat_router)
 app.include_router(category_router)
+app.include_router(billing_router)
+app.include_router(activation_router)
 
 
 @app.on_event("startup")
 def _startup() -> None:
     Base.metadata.create_all(engine)
+    # Must run before any `User` ORM query below: the User model maps the plan/
+    # stripe columns, so a SELECT emitted by run_tenancy/_bootstrap_admin fails
+    # until these columns exist (PAY-01/02/03, PAY-04).
+    run_plans()                     # users.plan + stripe columns + backfill
     org_id = run_tenancy()          # org_id column + default org + backfill (EF-12)
     run_models()                    # jobs model columns + seed catalog (EF-28)
     _bootstrap_admin(org_id)
@@ -85,9 +97,23 @@ async def create_job(file: UploadFile,
                      _rl: None = Depends(upload_limit),
                      db=Depends(get_db)):
     cfg = get_settings()
+    # Monthly plan quota (PAY-01/02/03): block at-quota users with an upgrade
+    # message before doing any file work. Admins are exempt.
+    enforce_upload_quota(db, user, cfg)
     data = await file.read()
     if len(data) > cfg.max_file_bytes:
         raise HTTPException(413, f"file too large (> {cfg.max_file_bytes} bytes)")
+
+    # Free tier is digital-only (PAY-01): classify and block scanned/hybrid PDFs
+    # with an upgrade prompt. Only Free, non-admin users pay this classification
+    # cost; fail-open if classification errors (the pipeline handles bad files).
+    if user.role != "admin" and (user.plan or "free") == "free":
+        try:
+            from app.extraction.text_extractor import classify_pdf
+            label, _ = classify_pdf(data)
+        except Exception:
+            label = "digital"  # fail-open — let the normal pipeline surface errors
+        enforce_scanned_allowed(user, label)
     title = (file.filename or "document").rsplit(".", 1)[0]
 
     # Category ACL (EF-27): must have `upload` on the target category.
@@ -137,6 +163,9 @@ def _owned_job(job_id: str, user: User, db) -> Job:
 def get_job(job_id: str, user: User = Depends(get_current_user), db=Depends(get_db)):
     job = require_job_access(db, user, job_id)
     d = job.detail()
+    # Free-tier concept-map cap (PAY-01): trims the served graph + adds paywall
+    # metadata for the upgrade prompt. Non-mutating; paid/admin pass through.
+    d["graph"] = apply_free_tier_caps(d.get("graph"), user, get_settings())
     # Cheap existence check (selects the key only, not the blob).
     d["has_pdf"] = db.scalar(select(DocumentFile.job_id).where(DocumentFile.job_id == job_id)) is not None
     return d
@@ -334,6 +363,13 @@ def admin_set_user_models(user_id: str, body: ModelDefaultsIn,
     db.commit()
     audit("ADMIN_SET_USER_MODELS", admin=admin.id, target=user_id)
     return {"ok": True}
+
+
+@app.get("/api/usage")
+def get_usage(user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Current user's plan + monthly upload usage (PAY-06 / ACT). Drives the
+    frontend quota meter and contextual upgrade prompts."""
+    return plan_usage(db, user, get_settings())
 
 
 @app.get("/api/health")

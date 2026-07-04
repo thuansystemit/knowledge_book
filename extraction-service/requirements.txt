@@ -24,3 +24,6 @@ passlib==1.7.4
 bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
 email-validator==2.2.0
+# Stripe subscription billing (PAY-04). Optional at runtime — billing endpoints
+# return 503 if STRIPE_SECRET_KEY is unset — but pinned so Docker images include it.
+stripe==10.12.0

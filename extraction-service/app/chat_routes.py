@@ -70,6 +70,12 @@ def ask(job_id: str, body: AskIn,
     db.add(msg)
     db.commit()
     audit("CHAT_ASK", job=job_id, user=user.id, msg=msg.id)
+    # Activation: user asked ≥1 Q&A on this doc (ACT-03). Idempotent; best-effort.
+    try:
+        from app import activation
+        activation.record_qa(db, user.id, job_id, org_id=job.org_id)
+    except Exception:
+        pass
     return {"message_id": msg.id, "stream_token": make_chat_stream(user.id, job_id, msg.id)}
 
 

@@ -78,6 +78,21 @@ def run_models() -> None:
                 credit_cost_extraction=s["ce"], credit_cost_chat=s["cc"]))
 
 
+def run_plans() -> None:
+    """Add `users.plan` (idempotent). Backfills existing rows to 'free'; admins
+    are quota-exempt at enforcement time regardless of plan. Consumer plans
+    (free|pro|scholar) are orthogonal to RBAC role (PAY-01/02/03)."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(16) DEFAULT 'free'"))
+        conn.execute(text("UPDATE users SET plan = 'free' WHERE plan IS NULL"))
+        # Stripe billing linkage (PAY-04).
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_status VARCHAR(20) DEFAULT 'none'"))
+        conn.execute(text("UPDATE users SET plan_status = 'none' WHERE plan_status IS NULL"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(64)"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(64)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_stripe_customer_id ON users (stripe_customer_id)"))
+
+
 def run_categories() -> None:
     """Add `jobs.category_id` (idempotent) and, per org, ensure a 'General'
     category, backfill existing jobs into it, and grant existing non-admin users
