@@ -13,6 +13,14 @@ export interface Metrics {
     median_ms: number | null; p95_ms: number | null;
     budget_ms: number; over_budget: boolean;
   };
+  ocr: {
+    count: number;
+    median: number | null;
+    threshold: number;
+    low_confidence: number;
+    low_confidence_rate: number | null;
+    histogram: Record<string, number>;
+  };
 }
 
 /** Admin-only latency observability (ACT-05 pipeline + ACT-07 Q&A). */

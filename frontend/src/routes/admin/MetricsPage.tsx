@@ -88,6 +88,36 @@ export function MetricsPage() {
         {tile('Target', ms(q.budget_ms))}
       </div>
 
+      {/* OCR confidence distribution (ACT-06) */}
+      {data.ocr.count > 0 && (() => {
+        const o = data.ocr;
+        const max = Math.max(1, ...Object.values(o.histogram));
+        return (
+          <>
+            <div className="section-heading mb-2 mt-4">OCR confidence ({o.count} scanned)</div>
+            <div className="row g-3 mb-2" style={{ maxWidth: 960 }}>
+              {tile('Median', o.median != null ? `${o.median}%` : '—')}
+              {tile('Low-confidence', `${o.low_confidence}`, o.low_confidence > 0)}
+              {tile('Low-conf rate', o.low_confidence_rate != null ? `${Math.round(o.low_confidence_rate * 100)}%` : '—', !!(o.low_confidence_rate && o.low_confidence_rate > 0.2))}
+              {tile('Threshold', `${o.threshold}%`)}
+            </div>
+            <div className="card mb-4" style={{ maxWidth: 960 }}>
+              <div className="card-body">
+                {Object.entries(o.histogram).map(([bucket, n]) => (
+                  <div key={bucket} className="d-flex align-items-center gap-2 mb-1">
+                    <div style={{ width: 64, fontSize: '0.8125rem', color: 'var(--muted)' }}>{bucket}%</div>
+                    <div style={{ flex: 1, background: 'var(--brand-light)', borderRadius: 4, height: 16, position: 'relative' }}>
+                      <div style={{ width: `${(n / max) * 100}%`, background: 'var(--brand)', height: '100%', borderRadius: 4 }} />
+                    </div>
+                    <div style={{ width: 32, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{n}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
       {p.count === 0 && q.count === 0 && (
         <div className="alert alert-info mt-4" role="status" style={{ maxWidth: 960 }}>
           No timing data yet — process a document and ask a question (data is recorded on new activity).

@@ -58,6 +58,7 @@ def run_models() -> None:
         conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS llm_provider VARCHAR(20)"))
         conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(8,4)"))  # EXT-02
         conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS duration_ms INTEGER"))     # ACT-05
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ocr_confidence NUMERIC(5,2)"))  # ACT-06
         conn.execute(text("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS latency_ms INTEGER"))  # ACT-07
 
     cfg = get_settings()

@@ -86,6 +86,8 @@ class Job(Base):
     cost_usd: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
     # End-to-end pipeline wall-clock (ACT-05) — for the latency dashboard.
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Mean OCR word confidence 0-100 (ACT-06); null when the doc needed no OCR.
+    ocr_confidence: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 

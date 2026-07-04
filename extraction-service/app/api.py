@@ -453,6 +453,15 @@ def admin_metrics(admin: User = Depends(require_role("admin")), db=Depends(get_d
     lats = [int(x) for (x,) in db.execute(
         select(ChatMessage.latency_ms).where(ChatMessage.latency_ms.isnot(None))).all()]
     qa_median = _percentile(lats, 0.5)
+    # OCR confidence distribution (ACT-06)
+    confs = [float(c) for (c,) in db.execute(
+        select(Job.ocr_confidence).where(Job.ocr_confidence.isnot(None))).all()]
+    thr = get_settings().ocr_min_confidence
+    buckets = {"0-50": 0, "50-70": 0, "70-85": 0, "85-100": 0}
+    for c in confs:
+        key = "0-50" if c < 50 else "50-70" if c < 70 else "70-85" if c < 85 else "85-100"
+        buckets[key] += 1
+    low = sum(1 for c in confs if c < thr)
     return {
         "pipeline": {
             "count": len(durs),
@@ -466,6 +475,14 @@ def admin_metrics(admin: User = Depends(require_role("admin")), db=Depends(get_d
             "count": len(lats),
             "median_ms": qa_median, "p95_ms": _percentile(lats, 0.95),
             "budget_ms": 8000, "over_budget": bool(qa_median and qa_median > 8000),
+        },
+        "ocr": {
+            "count": len(confs),
+            "median": _percentile(confs, 0.5),
+            "threshold": thr,
+            "low_confidence": low,
+            "low_confidence_rate": round(low / len(confs), 3) if confs else None,
+            "histogram": buckets,
         },
     }
 
