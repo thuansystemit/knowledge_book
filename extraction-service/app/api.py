@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app import job_events
 from app.access import general_category_id, require_category, require_job_access, visible_category_ids
@@ -363,6 +363,23 @@ def admin_set_user_models(user_id: str, body: ModelDefaultsIn,
     db.commit()
     audit("ADMIN_SET_USER_MODELS", admin=admin.id, target=user_id)
     return {"ok": True}
+
+
+@app.get("/api/admin/costs")
+def admin_costs(admin: User = Depends(require_role("admin")), db=Depends(get_db)):
+    """Per-document cost telemetry for the ops dashboard (ACT-04 / EXT-02)."""
+    cnt, total, avg, mx = db.execute(
+        select(func.count(Job.id), func.coalesce(func.sum(Job.cost_usd), 0),
+               func.coalesce(func.avg(Job.cost_usd), 0), func.coalesce(func.max(Job.cost_usd), 0))
+        .where(Job.cost_usd.isnot(None))).one()
+    top = db.scalars(select(Job).where(Job.cost_usd.isnot(None))
+                     .order_by(Job.cost_usd.desc()).limit(10)).all()
+    return {
+        "documents": int(cnt), "total_usd": round(float(total), 4),
+        "avg_usd": round(float(avg), 4), "max_usd": round(float(mx), 4),
+        "cap_usd": get_settings().max_doc_cost_usd,
+        "top": [{"job_id": j.id, "title": j.title, "cost_usd": float(j.cost_usd)} for j in top],
+    }
 
 
 @app.get("/api/usage")

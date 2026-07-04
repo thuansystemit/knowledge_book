@@ -49,6 +49,7 @@ def run_extraction(job_id: str) -> None:
                 job.graph = graph
                 job.events = job_events.all_events(job_id)
                 job.error = error
+                job.cost_usd = (graph or {}).get("cost", {}).get("usd") if graph else None
         job_events.mark_done(job_id)
 
 
@@ -82,6 +83,7 @@ def retry_extraction(job_id: str) -> None:
                 job.status = status
                 if new_graph is not None:
                     job.graph = new_graph
+                    job.cost_usd = (new_graph.get("cost") or {}).get("usd")
                 job.events = job_events.all_events(job_id)
                 job.error = error
         job_events.mark_done(job_id)

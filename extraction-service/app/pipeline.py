@@ -14,6 +14,7 @@ import os
 from typing import Callable, Optional
 
 from app.config import Settings
+from app.costs import CostLedger
 from app.domain.graph_schema import NODE_TYPES  # noqa: F401  (kept for callers)
 from app.extraction.chunker import chunk_text
 from app.extraction.text_extractor import classify_pdf, extract_text
@@ -63,13 +64,15 @@ def run(
     kg_prompt = _load_prompt("kg_extract.txt")
     builder = GraphBuilder()
     failed: list[dict] = []
+    ledger = CostLedger()   # per-document cost accounting + hard cap (EXT-02)
 
     emit("extract", total=len(chunks), index=0)
     for ch in chunks:
         chunk = {"index": ch.index, "chapter": ch.chapter,
                  "page_start": ch.page_start, "page_end": ch.page_end, "content": ch.content}
-        if not _extract_chunk(provider, kg_prompt, doc_title, chunk, builder, cfg):
+        if not _extract_chunk(provider, kg_prompt, doc_title, chunk, builder, cfg, ledger):
             failed.append(chunk)
+        _enforce_cost_cap(ledger, cfg, emit)   # abort before overrunning the budget
         emit("extract", total=len(chunks), index=ch.index + 1,
              detail=f"chapter: {ch.chapter or '(unknown)'}")
     emit("extract", "done", total=len(chunks), detail=f"{len(failed)} chunk error(s)")
@@ -88,9 +91,11 @@ def run(
 
     if cfg.generate_brief:
         emit("brief")
-        graph["brief"] = _make_brief(graph, doc_title, provider)
+        graph["brief"] = _make_brief(graph, doc_title, provider, ledger)
         emit("brief", "done")
 
+    graph["cost"] = ledger.summary()
+    audit("COST_LEDGER", **graph["cost"])
     emit("done", "done", **graph["stats"])
     return graph
 
@@ -102,8 +107,22 @@ def _chunk_header(doc_title: str, chunk: dict) -> str:
     )
 
 
+class CostCapExceeded(RuntimeError):
+    """Raised to abort a document whose accrued LLM cost exceeds the cap (EXT-02).
+    The message begins with `cost_cap` so the job records FAILED(cost_cap)."""
+
+
+def _enforce_cost_cap(ledger: CostLedger, cfg: Settings, emit) -> None:
+    cap = cfg.max_doc_cost_usd
+    if cap and ledger.usd > cap:
+        detail = f"cost_cap: spent ${ledger.usd:.2f} exceeds ${cap:.2f} budget"
+        emit("extract", "error", detail=detail)
+        raise CostCapExceeded(detail)
+
+
 def _extract_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
-                   chunk: dict, builder: GraphBuilder, cfg: Settings) -> bool:
+                   chunk: dict, builder: GraphBuilder, cfg: Settings,
+                   ledger: CostLedger | None = None) -> bool:
     """Extract one chunk into the builder, retrying transient model failures.
     Returns True on success. Shared by the main run and retry_failed."""
     source_ref = {"chapter": chunk["chapter"], "page_start": chunk["page_start"],
@@ -113,6 +132,8 @@ def _extract_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
     for attempt in range(cfg.chunk_retries + 1):
         try:
             raw = provider.complete_json(kg_prompt, header, max_tokens=8000)
+            if ledger is not None:
+                ledger.add(getattr(provider, "model", None), getattr(provider, "last_usage", None))
             builder.add_chunk(json.loads(raw), source_ref)
             if attempt > 0:
                 audit("CHUNK_RECOVERED", index=chunk["index"], attempt=attempt + 1)
@@ -155,11 +176,13 @@ def retry_failed(
     kg_prompt = _load_prompt("kg_extract.txt")
     builder = GraphBuilder.from_graph(graph)   # seed with the existing graph
     still_failed: list[dict] = []
+    ledger = CostLedger()
 
     emit("extract", total=len(failed), index=0, detail="retrying failed chunks")
     for i, chunk in enumerate(failed, 1):
-        if not _extract_chunk(provider, kg_prompt, doc_title, chunk, builder, cfg):
+        if not _extract_chunk(provider, kg_prompt, doc_title, chunk, builder, cfg, ledger):
             still_failed.append(chunk)
+        _enforce_cost_cap(ledger, cfg, emit)
         emit("extract", total=len(failed), index=i,
              detail=f"chapter: {chunk.get('chapter') or '(unknown)'}")
     emit("extract", "done", total=len(failed), detail=f"{len(still_failed)} still failed")
@@ -171,6 +194,15 @@ def retry_failed(
     new_graph["brief"] = graph.get("brief")          # preserve the existing Brief
     new_graph["failed_chunks"] = still_failed
     new_graph["warnings"] = _warnings(len(still_failed), doc.get("pdf_type", ""))
+    # Accumulate retry cost onto the document's existing ledger (EXT-02).
+    prev = graph.get("cost") or {}
+    add = ledger.summary()
+    new_graph["cost"] = {
+        "calls": prev.get("calls", 0) + add["calls"],
+        "input_tokens": prev.get("input_tokens", 0) + add["input_tokens"],
+        "output_tokens": prev.get("output_tokens", 0) + add["output_tokens"],
+        "usd": round(prev.get("usd", 0.0) + add["usd"], 4),
+    }
     audit("RETRY_DONE", recovered=len(failed) - len(still_failed), remaining=len(still_failed),
           **new_graph["stats"])
     emit("merge", "done", detail=f"{new_graph['stats']['node_count']} concepts, "
@@ -179,7 +211,8 @@ def retry_failed(
     return new_graph
 
 
-def _make_brief(graph: dict, doc_title: str, provider: LlmProvider) -> Optional[dict]:
+def _make_brief(graph: dict, doc_title: str, provider: LlmProvider,
+                ledger: CostLedger | None = None) -> Optional[dict]:
     """Synthesise the executive Brief from the top concepts/relations."""
     top_nodes = graph["nodes"][:25]
     concept_lines = [f"- {n['name']} ({n['type']}): {n['definition']}" for n in top_nodes]
@@ -194,6 +227,8 @@ def _make_brief(graph: dict, doc_title: str, provider: LlmProvider) -> Optional[
     )
     try:
         raw = provider.complete_json(_load_prompt("brief.txt"), payload, max_tokens=2048)
+        if ledger is not None:
+            ledger.add(getattr(provider, "model", None), getattr(provider, "last_usage", None))
         return json.loads(raw)
     except Exception as e:
         audit("BRIEF_FAILED", error=str(e))

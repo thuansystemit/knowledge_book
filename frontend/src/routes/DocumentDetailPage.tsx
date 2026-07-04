@@ -215,6 +215,10 @@ export function DocumentDetailPage() {
               { label: 'Relations', value: g.stats.edge_count },
               { label: 'PDF type',  value: g.document?.pdf_type ?? '—' },
               { label: 'Chunks',    value: g.document?.pages_chunked ?? '—' },
+              // Admin-only LLM cost (EXT-02) — internal ops signal, not user-facing.
+              ...(currentUser?.role === 'admin' && g.cost
+                ? [{ label: 'Cost (LLM)', value: `$${g.cost.usd < 1 ? g.cost.usd.toFixed(4) : g.cost.usd.toFixed(2)}` }]
+                : []),
             ].map((s) => (
               <div className="col-6 col-md-3" key={s.label}>
                 <div className="stat-card">

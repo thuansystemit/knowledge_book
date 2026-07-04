@@ -13,6 +13,7 @@ class OpenAiProvider:
 
         self._client = OpenAI(api_key=api_key, max_retries=3)
         self.model = model
+        self.last_usage: dict | None = None  # token usage of the last complete_json (EXT-02)
 
     def stream_chat(self, system_prompt: str, messages: list[dict], max_tokens: int = 2048) -> Iterator[str]:
         resp = self._client.chat.completions.create(
@@ -36,4 +37,9 @@ class OpenAiProvider:
                 {"role": "user", "content": user_text},
             ],
         )
+        try:
+            self.last_usage = {"input_tokens": resp.usage.prompt_tokens,
+                               "output_tokens": resp.usage.completion_tokens}
+        except Exception:
+            self.last_usage = None
         return json.dumps(extract_json_object(resp.choices[0].message.content or ""))

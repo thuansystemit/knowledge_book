@@ -82,6 +82,8 @@ class Job(Base):
     category_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     events: Mapped[list] = mapped_column(JSON, default=list)
     graph: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Estimated per-document LLM cost in USD (EXT-02) — for the ops dashboard.
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -92,6 +94,7 @@ class Job(Base):
         return {
             "job_id": self.id, "title": self.title, "status": self.status,
             "node_count": stats.get("node_count"), "edge_count": stats.get("edge_count"),
+            "cost_usd": float(self.cost_usd) if self.cost_usd is not None else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

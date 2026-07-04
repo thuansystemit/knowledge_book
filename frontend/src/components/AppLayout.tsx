@@ -16,6 +16,7 @@ const PRIMARY_NAV = [
 const ADMIN_NAV = [
   { to: '/admin/users',  label: 'Users'  },
   { to: '/admin/config', label: 'Config' },
+  { to: '/admin/costs',  label: 'Costs'  },
 ];
 
 export function AppLayout() {

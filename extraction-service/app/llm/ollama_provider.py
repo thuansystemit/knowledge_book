@@ -12,6 +12,7 @@ class OllamaProvider:
     def __init__(self, base_url: str, model: str):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.last_usage: dict | None = None  # local model — no metered cost (EXT-02)
 
     def stream_chat(self, system_prompt: str, messages: list[dict], max_tokens: int = 2048) -> Iterator[str]:
         body = json.dumps({

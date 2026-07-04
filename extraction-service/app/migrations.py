@@ -56,6 +56,7 @@ def run_models() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS extraction_model VARCHAR(100)"))
         conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS llm_provider VARCHAR(20)"))
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(8,4)"))  # EXT-02
 
     cfg = get_settings()
     seeds = [

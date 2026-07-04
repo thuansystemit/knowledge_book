@@ -20,6 +20,7 @@ class ClaudeProvider:
         # max_retries -> SDK exponential backoff on 429/5xx/overloaded/timeout.
         self._client = Anthropic(api_key=api_key, max_retries=3)
         self.model = model
+        self.last_usage: dict | None = None  # token usage of the last complete_json (EXT-02)
 
     def stream_chat(self, system_prompt: str, messages: list[dict], max_tokens: int = 2048) -> Iterator[str]:
         # Plain-text chat: no JSON schema, no thinking needed.
@@ -40,6 +41,11 @@ class ClaudeProvider:
             system=system_prompt,
             messages=[{"role": "user", "content": user_text}],
         )
+        try:
+            self.last_usage = {"input_tokens": resp.usage.input_tokens,
+                               "output_tokens": resp.usage.output_tokens}
+        except Exception:
+            self.last_usage = None
         text = "".join(
             b.text for b in resp.content if getattr(b, "type", "") == "text"
         )

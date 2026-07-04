@@ -21,6 +21,7 @@ export interface Graph {
   warnings?: string[]; brief?: Brief | null;
   failed_chunks?: unknown[];
   paywall?: Paywall;   // set when the Free tier caps the concept map (PAY-01)
+  cost?: { calls: number; input_tokens: number; output_tokens: number; usd: number };  // EXT-02
 }
 export interface JobSummary {
   job_id: string; title: string; status: string;

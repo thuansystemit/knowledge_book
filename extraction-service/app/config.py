@@ -53,6 +53,10 @@ class Settings:
     # Extra attempts per chunk when the model returns unparseable output (small
     # local models occasionally do). 2 -> up to 3 tries before giving up.
     chunk_retries: int = field(default_factory=lambda: int(os.environ.get("CHUNK_RETRIES", "2")))
+    # Per-document hard cost cap in USD (EXT-02). If accrued LLM cost exceeds this
+    # mid-pipeline, the job aborts with FAILED(cost_cap) before overrunning. 0 =
+    # disabled. Local/free models never accrue cost, so this never trips them.
+    max_doc_cost_usd: float = field(default_factory=lambda: float(os.environ.get("MAX_DOC_COST_USD", "2.0")))
 
     # Outputs
     output_dir: str = field(default_factory=lambda: os.environ.get("OUTPUT_DIR", "/out"))
