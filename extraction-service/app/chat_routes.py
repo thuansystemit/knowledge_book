@@ -5,6 +5,8 @@ can't send auth headers, so the token rides in ?t=)."""
 from __future__ import annotations
 
 import json
+import re
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -110,7 +112,15 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
                 s.add(ChatMessage(session_id=session.id, role="assistant",
                                   content=answer, citations=citations,
                                   model="retrieval-v1"))
-            yield f"data: {json.dumps({'token': answer})}\n\n"
+            # Stream word-by-word for a natural typing effect (like ChatGPT/Claude)
+            # instead of dumping the whole answer at once. The frontend already
+            # appends token frames incrementally, so no UI change is needed.
+            delay = max(cfg.retrieval_stream_delay_ms, 0) / 1000.0
+            tokens = re.findall(r"\S+\s*", answer) or [answer]
+            for tok in tokens:
+                yield f"data: {json.dumps({'token': tok})}\n\n"
+                if delay:
+                    time.sleep(delay)
             yield f"data: {json.dumps({'done': True, 'citations': citations})}\n\n"
             yield "event: end\ndata: {}\n\n"
 

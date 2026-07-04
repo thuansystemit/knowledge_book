@@ -120,6 +120,10 @@ class Settings:
     #        deterministically from the extracted graph (see chat.compose_answer).
     #   "llm" — stream a generated answer from the configured chat model.
     chat_mode: str = field(default_factory=lambda: os.environ.get("CHAT_MODE", "retrieval").strip().lower())
+    # Retrieval-mode answers are computed instantly; stream them word-by-word with
+    # this delay (ms) for a natural "typing" effect like ChatGPT/Claude. 0 = send
+    # the whole answer at once (RC-21-adjacent UX).
+    retrieval_stream_delay_ms: int = field(default_factory=lambda: int(os.environ.get("RETRIEVAL_STREAM_DELAY_MS", "18")))
 
 
 def get_settings() -> Settings:

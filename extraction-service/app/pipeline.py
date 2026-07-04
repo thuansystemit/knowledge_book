@@ -80,6 +80,14 @@ def run(
     emit("merge")
     graph = builder.build()
     graph["document"] = {"title": doc_title, "pdf_type": pdf_type, "pages_chunked": len(chunks)}
+    # Persist section chunks for zero-LLM retrieval chat (RC-10): excerpt lookup
+    # composes cited answers from this text without a query-time model. Stored in
+    # the graph JSON so chat.py stays a pure function over the graph.
+    graph["chunks"] = [
+        {"index": ch.index, "chapter": ch.chapter, "page_start": ch.page_start,
+         "page_end": ch.page_end, "content": ch.content}
+        for ch in chunks
+    ]
     # Keep the failed chunks' text so they can be retried + merged into THIS graph
     # later (retry_failed / POST /api/jobs/{id}/retry-failed) rather than re-running
     # the whole document.
@@ -192,6 +200,7 @@ def retry_failed(
     doc = graph.get("document") or {}
     new_graph["document"] = doc
     new_graph["brief"] = graph.get("brief")          # preserve the existing Brief
+    new_graph["chunks"] = graph.get("chunks")        # preserve persisted chunks (RC-10)
     new_graph["failed_chunks"] = still_failed
     new_graph["warnings"] = _warnings(len(still_failed), doc.get("pdf_type", ""))
     # Accumulate retry cost onto the document's existing ledger (EXT-02).
