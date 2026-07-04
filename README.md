@@ -26,23 +26,27 @@ The stack is a **React dashboard**, a **FastAPI** API, a **Celery worker** (dura
 extraction jobs), **Postgres**, and **Redis** (Celery broker + cross-replica SSE
 pub/sub + config cache), plus a pluggable **LLM provider** (local Ollama by
 default; Claude/OpenAI) used for **extraction**. **Chat answers are composed from
-the extracted graph with no query-time LLM by default** (`CHAT_MODE=retrieval`);
-a generative LLM answer is opt-in (`CHAT_MODE=llm`). Auth is JWT (in-memory access
-token + HttpOnly refresh cookie) with **RBAC** (admin / analyst / viewer),
-**multi-tenant** org scoping, and **per-category access control**.
+the extracted graph + persisted chunks with no query-time LLM by default**
+(`CHAT_MODE=retrieval`): TF-IDF + stemming + a synonym lexicon, optional
+**semantic embeddings**, verbatim cited excerpts, an honest "not covered", and a
+ChatGPT-style typing stream. A generative LLM answer is a per-plan upgrade
+(`CHAT_MODE=llm`, gated to Pro/Scholar). Auth is JWT (in-memory access token +
+HttpOnly refresh cookie) with **RBAC** (admin / analyst / viewer), **multi-tenant**
+org scoping, **per-category access control**, and **consumer subscription plans**
+(Free / Pro / Scholar) with monthly quotas and **Stripe** billing.
 
 ```mermaid
 flowchart TB
     subgraph Browser
-      UI["React dashboard (Vite + Bootstrap/Tailwind)<br/>Documents · Workflow · Graph · Chat · Source PDF · Admin · Profile · About/Privacy/Terms"]
+      UI["React dashboard (Vite + Bootstrap/Tailwind)<br/>Documents · Workflow · Graph · Chat · Source PDF<br/>Billing/Plans · Admin (Users · Config · Costs) · Profile · About/Privacy/Terms"]
     end
 
     subgraph Docker["Docker stack"]
       FE["frontend<br/>nginx :5173"]
-      API["api — FastAPI :8000<br/>auth · RBAC · categories · model choice · SSE"]
+      API["api — FastAPI :8000<br/>auth · RBAC · categories · model choice · SSE<br/>plans · quotas · Stripe billing · cost/activation"]
       WK["worker — Celery<br/>extraction / retry jobs"]
       RS[("Redis<br/>Celery broker · SSE pub/sub · config cache")]
-      DB[("Postgres<br/>orgs · users · jobs+PDF · categories+ACL<br/>model catalog/policies · chat")]
+      DB[("Postgres<br/>orgs · users+plans · jobs+PDF+cost · categories+ACL<br/>model catalog/policies · chat · activation")]
     end
 
     LLM["LLM provider (per-request, DB-resolved)<br/>Ollama (local) · Claude · OpenAI"]
@@ -70,7 +74,7 @@ flowchart LR
     K --> E["per-chunk LLM extract<br/>concepts + relations (retries)"]
     E --> M["merge + dedup<br/>knowledge graph"]
     M --> B["synthesize Brief"]
-    B --> G[("graph + brief<br/>persisted on the job")]
+    B --> G[("graph + brief + chunks<br/>(+ optional embeddings, cost)<br/>persisted on the job")]
 ```
 
 **Chat** (grounded on the stored graph; **no query-time LLM by default**):
@@ -78,20 +82,23 @@ flowchart LR
 ```mermaid
 flowchart LR
     Q["question"] --> P["POST /chat<br/>save msg → stream-token"]
-    P --> S["retrieve graph slice<br/>chapter-scope / keyword + edges + brief"]
-    S --> A["compose_answer<br/>deterministic template (default)"]
-    S -.-> L["provider.stream_chat<br/>opt-in: CHAT_MODE=llm"]
-    A --> SSE["SSE answer + citations<br/>→ Chat tab"]
+    P --> S["retrieve<br/>concepts (TF-IDF + stem + synonyms)<br/>+ chunks + edges + brief<br/>+ optional embeddings"]
+    S --> A["compose_answer<br/>definitions + relations + cited excerpts<br/>or honest 'not covered'"]
+    S -.-> L["provider.stream_chat<br/>Pro/Scholar: CHAT_MODE=llm"]
+    A --> SSE["SSE typing stream + citations<br/>+ 'no-AI' provenance badge → Chat tab"]
     L -.-> SSE
 ```
 
-> Grounding is **graph-only** (no embeddings/RAG). By default (`CHAT_MODE=retrieval`)
-> answers are composed deterministically from the extracted concepts, definitions,
-> relationships, and brief — instant, zero per-question LLM cost, and available to
-> **all roles** (read-only, gated by the same per-document ACL). Set `CHAT_MODE=llm`
-> for generative, multi-turn answers. See
-> [`docs/FEATURE-document-chat.md`](docs/FEATURE-document-chat.md) for the upgrade
-> path to hybrid retrieval.
+> **Retrieval mode (default, zero-LLM):** answers are composed deterministically
+> from the extracted concepts, definitions, relationships, cited **verbatim
+> excerpts** (from persisted chunks), and the brief — with **TF-IDF ranking +
+> stemming + a synonym lexicon**, an optional **semantic-embedding** layer
+> (`EMBEDDING_MODEL`), anaphoric **follow-ups** ("tell me more about it"), and an
+> honest "not covered" when nothing matches. Instant, zero per-question cost,
+> available to **all roles/plans** (read-only, per-document ACL). **Value ladder
+> (`CHAT_MODE=llm`):** Free plans get retrieval chat; Pro/Scholar get generative
+> LLM answers (gated by `CHAT_LLM_MIN_PLAN`; admins bypass; set `free` on-prem).
+> See [`docs/feature-tracking-retrieval-chat.md`](docs/feature-tracking-retrieval-chat.md).
 
 ---
 
@@ -103,9 +110,14 @@ flowchart LR
 - **Live workflow** — watch each stage stream over SSE (survives page refresh);
   **retry** just the failed chunks and merge them back in.
 - **Explore** — interactive concept **graph**, **Brief**, **Chat** with the
-  document (graph-grounded, cited; **retrieval by default — no per-question LLM**,
-  optional generative LLM mode), and a **Source-PDF viewer** with zoom + page nav
-  to compare answers against the original.
+  document, and a **Source-PDF viewer** with zoom + page nav to compare answers
+  against the original.
+- **Grounded chat (zero-LLM by default)** — retrieval over the graph + persisted
+  chunks: **TF-IDF ranking + stemming + synonyms**, optional **semantic
+  embeddings**, **verbatim cited excerpts**, anaphoric **follow-ups**, an honest
+  **"not covered"**, and a **ChatGPT-style typing stream**. Each answer shows a
+  **provenance badge** ("Answered from the document · no AI" vs "AI-generated").
+  Generative LLM chat is a **Pro/Scholar** upgrade.
 - **Choose your model, per request** — free local `qwen2.5:3b` by default; pick a
   premium model (Claude / GPT-4o) for extraction (and chat in LLM mode).
   Config-as-data (DB-resolved, **no restart**).
@@ -121,6 +133,17 @@ flowchart LR
   pages (reachable without signing in; legal copy is a placeholder to be reviewed
   by counsel). Destructive actions (delete document/category) require an on-theme
   **confirmation dialog**.
+- **Plans & billing** — consumer **subscription tiers** (Free / Pro / Scholar)
+  with env-tunable **monthly upload quotas** (2 / 20 / 60), Free-tier fences
+  (digital-only, 10-concept cap, retrieval-only chat), a **usage meter**, and
+  **Stripe** checkout + billing portal + signature-verified webhooks (config-gated;
+  the app runs fine without Stripe). See
+  [`docs/monetization-pricing.md`](docs/monetization-pricing.md) and
+  [`docs/STRIPE-setup.md`](docs/STRIPE-setup.md).
+- **Cost controls & activation** — a per-document **LLM cost ledger** with a hard
+  **cost cap** (`MAX_DOC_COST_USD`, aborts a job before overrun), an admin **cost
+  dashboard** (`/admin/costs`), and **activation instrumentation** (Concept-Map
+  view + thumbs rating + co-session Q&A) feeding an admin activation-rate summary.
 - **Ops** — Postgres + Redis + Celery worker; per-user **rate limiting**.
 
 See [`docs/ENTERPRISE-productization.md`](docs/ENTERPRISE-productization.md) for the
@@ -154,6 +177,12 @@ are another agent — it's self-contained):
 | `ENTERPRISE-productization.md` | Commercialization strategy — ICP, pricing, EF-01…EF-28 requirements, roadmap, decisions D1…D14 |
 | `ARCHITECTURE-enterprise.md` | Target backbone — Celery/Redis, cross-replica SSE, config-as-data, tenancy + enforcement, migration order |
 | `DATA-MODEL-enterprise.md` | Enterprise schema — orgs, categories+ACL, model catalog/policies, credits, audit; migration/backfill plan |
+| `feature-tracking.md` | Live MVP work-item tracker (ingestion, outputs, paywall, activation, cost) with statuses |
+| `feature-tracking-retrieval-chat.md` | Tracker for the zero-LLM retrieval chat (chunks, TF-IDF/stemming/synonyms, embeddings, honesty, streaming, value ladder) |
+| `monetization-pricing.md` | Pricing model — Free/Pro/Scholar tiers, quotas, unit economics |
+| `competitive-analysis.md` | Teardown vs. ChatPDF, Humata, Elicit, Scholarcy, Perplexity + positioning |
+| `gtm-one-pager.md` | Go-to-market — beachhead persona, channels, 90-day launch plan |
+| `STRIPE-setup.md` | Step-by-step Stripe integration + webhook setup guide |
 
 ---
 
@@ -178,10 +207,59 @@ category + model → upload a PDF → watch the workflow → explore Graph / Bri
 
 **LLM provider** is `.env`-driven and **per-request** (`ollama | claude | openai`),
 defaulting to the local Ollama model — switch per user/org with no restart
-(config-as-data). **Chat mode** is set with `CHAT_MODE` in `.env`: `retrieval`
-(default — answers composed from the graph, no query-time LLM) or `llm`
-(generative, multi-turn). See `extraction-service/README.md` for details, and
-there's a no-auth **one-shot CLI** for scripting: `docker compose run --rm extractor`.
+(config-as-data). Key `.env` knobs (see `extraction-service/.env.example`):
+
+- `CHAT_MODE` — `retrieval` (default, zero-LLM) or `llm` (generative).
+- `CHAT_LLM_MIN_PLAN` — min plan for LLM chat when `CHAT_MODE=llm` (default `pro`;
+  set `free` on-prem so everyone gets LLM chat).
+- `EMBEDDING_MODEL` — set (e.g. `nomic-embed-text`) to enable **semantic** chat
+  retrieval; blank = lexical only. Re-process docs after enabling.
+- `PLAN_FREE_DOCS` / `PLAN_PRO_DOCS` / `PLAN_SCHOLAR_DOCS`, `PLAN_FREE_CONCEPTS`,
+  `MAX_DOC_COST_USD` — plan quotas, Free concept cap, and the per-doc cost cap.
+- `STRIPE_SECRET_KEY` + price IDs — enable billing (blank = billing disabled, app
+  still runs). See `docs/STRIPE-setup.md`.
+
+There's also a no-auth **one-shot CLI** for scripting: `docker compose run --rm extractor`.
+
+### Reference deployment (current dev setup)
+
+The system is run **split across two machines on the same LAN** — the LLM is
+hosted separately so the 8 GB Mac isn't squeezed between the model and the stack:
+
+| Machine | Role | Specs | Runs |
+|---|---|---|---|
+| **LLM host** | Local model server | 16 GB RAM, Intel Core i5 + GTX 1650 | **Ollama** serving **`qwen2.5:3b`** on `:11434` |
+| **Mac (Apple M1)** | App stack | 8 GB RAM | **Docker Compose** — Postgres, Redis, FastAPI **API**, Celery **worker** (four core services) + the React **frontend** |
+
+```mermaid
+flowchart LR
+    subgraph Mac["Mac M1 · 8 GB — Docker Compose"]
+      FEc["frontend :5173"]
+      APIc["api :8000"]
+      WKc["worker (Celery)"]
+      DBc[("Postgres")]
+      RSc[("Redis")]
+    end
+    subgraph Host["LLM host · 16 GB · i5 + GTX 1650"]
+      OLL["Ollama<br/>qwen2.5:3b :11434"]
+    end
+    WKc -->|"extract / brief<br/>OLLAMA_BASE_URL (LAN)"| OLL
+    APIc -.->|"chat — LLM mode only"| OLL
+```
+
+On the Mac, point the stack at the LLM host in `extraction-service/.env`:
+
+```bash
+OLLAMA_BASE_URL=http://<llm-host-lan-ip>:11434   # e.g. http://192.168.100.158:11434
+OLLAMA_MODEL=qwen2.5:3b
+```
+
+Notes for this footprint: `qwen2.5:3b` is the fast/light choice for 16 GB — pair
+it with a smaller `CHUNK_TOKENS` (~600) and matching `CHUNK_OVERLAP`; chat runs in
+**retrieval mode** (zero-LLM) by default, so day-to-day chat needs no model calls
+at all.
+Bump to a larger local model, or set `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, only
+when you want higher-quality extraction.
 
 ---
 
@@ -193,7 +271,9 @@ independently-deployable order (see `docs/ARCHITECTURE-enterprise.md`):
 | Area | State |
 |---|---|
 | Core product | ✅ Ingestion → graph + Brief, live workflow, chat, source-PDF viewer |
-| Chat | ✅ Graph-grounded; **retrieval (no LLM) by default**, generative LLM opt-in (`CHAT_MODE`) |
+| Chat | ✅ Graph + chunk grounded retrieval (TF-IDF/stem/synonyms, excerpts, honesty, follow-ups, streaming, provenance); optional semantic embeddings; LLM mode gated to Pro/Scholar |
+| Plans & billing | ✅ Free/Pro/Scholar quotas + Free fences + usage meter; Stripe checkout/portal/webhook (config-gated) |
+| Cost & activation | ✅ Per-doc cost ledger + hard cap + admin `/admin/costs`; activation events (view/rating/Q&A) + summary |
 | Auth / RBAC | ✅ JWT + refresh, admin / analyst / viewer — enforced on upload / delete / chat |
 | Durable jobs | ✅ Celery + Redis (survive restarts) + cross-replica SSE |
 | Rate limiting | ✅ Per-user, Redis-backed |
