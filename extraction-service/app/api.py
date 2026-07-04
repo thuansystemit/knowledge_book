@@ -223,6 +223,28 @@ def retry_failed_chunks(job_id: str,
     return {"job_id": job_id, "retrying": len(failed)}
 
 
+@app.post("/api/jobs/{job_id}/reprocess")
+def reprocess_job(job_id: str,
+                  user: User = Depends(require_role("admin", "analyst")),
+                  _rl: None = Depends(upload_limit),
+                  db=Depends(get_db)):
+    """Re-run the full extraction on the stored source PDF, replacing the outputs
+    (OUT-07). Idempotent chunk caching (EXT-03) limits redundant LLM calls. Runs
+    in the background; watch via the SSE stream. Does not consume upload quota."""
+    job = _owned_job(job_id, user, db)
+    if job.status == "running":
+        raise HTTPException(409, "job is already running")
+    if not db.scalar(select(DocumentFile.job_id).where(DocumentFile.job_id == job_id)):
+        raise HTTPException(409, "no source file stored — cannot re-process")
+    job.status = "running"
+    job.events = []
+    job.error = None
+    db.commit()
+    audit("REPROCESS_START", job=job_id, user=user.id)
+    run_extraction.delay(job_id)   # replaces job.graph on completion
+    return {"job_id": job_id, "reprocessing": True}
+
+
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str, user: User = Depends(get_current_user), db=Depends(get_db)):
     job = _owned_job(job_id, user, db)

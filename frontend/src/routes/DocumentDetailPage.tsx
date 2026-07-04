@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  deleteJob, exportJob, getJob, retryFailed, subscribeEvents,
+  deleteJob, exportJob, getJob, reprocessJob, retryFailed, subscribeEvents,
   type JobDetail, type StageEvent,
 } from '../api/jobs.api';
 import { GraphView } from '../components/GraphView';
@@ -35,6 +35,8 @@ export function DocumentDetailPage() {
   const [graphMode, setGraphMode] = useState<'graph' | 'list'>('graph');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [reprocessDialogOpen, setReprocessDialogOpen] = useState(false);
+  const [reprocessBusy, setReprocessBusy] = useState(false);
   const unsubRef = useRef<(() => void) | undefined>(undefined);
 
   // Activation instrumentation (ACT-01/02): one session id per visit, fire the
@@ -113,6 +115,23 @@ export function DocumentDetailPage() {
     }
   };
 
+  /** Re-process (OUT-07): re-run the full extraction, replacing the outputs. */
+  const onReprocessClick = () => setReprocessDialogOpen(true);
+  const confirmReprocess = async () => {
+    if (!id) return;
+    setReprocessBusy(true);
+    try {
+      await reprocessJob(id);
+      setReprocessDialogOpen(false);
+      load();   // job is now 'running' — the workflow SSE takes over
+    } catch (e: unknown) {
+      setReprocessDialogOpen(false);
+      alert(getApiError(e, 'Failed to re-process document'));
+    } finally {
+      setReprocessBusy(false);
+    }
+  };
+
   if (notFound) return (
     <div className="empty-state">
       <i className="bi bi-file-earmark-x empty-state-icon"></i>
@@ -175,6 +194,12 @@ export function DocumentDetailPage() {
                 JSON
               </button>
             </div>
+          )}
+          {canDelete && (
+            <button className="btn btn-outline-secondary btn-sm" onClick={onReprocessClick}
+                    disabled={running} title="Re-run extraction on the source PDF">
+              <i className="bi bi-arrow-clockwise me-1"></i>Re-process
+            </button>
           )}
           {canDelete && (
             <button className="btn btn-outline-danger btn-sm" onClick={onDelete}>
@@ -556,6 +581,17 @@ export function DocumentDetailPage() {
         busy={deleteBusy}
         onConfirm={confirmDelete}
         onCancel={() => setDeleteDialogOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={reprocessDialogOpen}
+        title="Re-process document?"
+        message="This re-runs extraction on the source PDF and replaces the current Brief, Concept Map, and Chapter Guide. Chat history is kept."
+        confirmLabel="Re-process"
+        danger={false}
+        busy={reprocessBusy}
+        onConfirm={confirmReprocess}
+        onCancel={() => setReprocessDialogOpen(false)}
       />
     </div>
   );

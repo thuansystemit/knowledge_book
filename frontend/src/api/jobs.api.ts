@@ -83,6 +83,14 @@ export async function deleteJob(jobId: string) {
   await api.delete(`/api/jobs/${jobId}`);
 }
 
+/** Re-run the full extraction on the stored PDF, replacing the outputs (OUT-07). */
+export async function reprocessJob(jobId: string) {
+  const { data } = await api.post<{ job_id: string; reprocessing: boolean }>(
+    `/api/jobs/${jobId}/reprocess`,
+  );
+  return data;
+}
+
 /** Fetch the stored source PDF (with auth) and return an object URL for viewing.
  * Caller must URL.revokeObjectURL when done. */
 export async function fetchPdfObjectUrl(jobId: string): Promise<string> {
