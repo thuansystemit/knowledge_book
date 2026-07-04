@@ -13,11 +13,12 @@ import { useAuthStore } from '../store/authStore';
 import { getApiError } from '../lib/utils';
 import { getActivationStatus, recordRating, recordView } from '../api/activation.api';
 
-type Tab = 'brief' | 'graph' | 'chat' | 'document';
+type Tab = 'brief' | 'graph' | 'chapters' | 'chat' | 'document';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'brief',    label: 'Brief'         },
   { key: 'graph',    label: 'Knowledge graph' },
+  { key: 'chapters', label: 'Chapter guide' },
   { key: 'chat',     label: 'Chat'           },
   { key: 'document', label: 'Document'       },
 ];
@@ -208,6 +209,19 @@ export function DocumentDetailPage() {
 
       {g && (
         <>
+          {/* OCR quality gate (ING-06): warn before any output is trusted */}
+          {g.ocr_quality?.low_confidence && (
+            <div className="alert alert-warning d-flex align-items-start gap-2 mb-4" role="alert">
+              <i className="bi bi-exclamation-triangle-fill" aria-hidden="true" style={{ marginTop: 2 }} />
+              <div>
+                <strong>Low scan quality.</strong> This document was read by OCR at{' '}
+                {g.ocr_quality.mean_confidence}% average confidence
+                {g.ocr_quality.low_pages?.length ? ` on ${g.ocr_quality.low_pages.length} page(s)` : ''}.
+                Concepts and answers may contain recognition errors — verify against the source PDF.
+              </div>
+            </div>
+          )}
+
           {/* ── Stat row ── */}
           <div className="row g-3 mb-4">
             {[
@@ -418,6 +432,48 @@ export function DocumentDetailPage() {
                     </div>
                   )}
                 </>
+              )}
+
+              {/* ── Chapter guide tab (OUT-03) ── */}
+              {tab === 'chapters' && (
+                g.chapter_guide_locked ? (
+                  <div className="alert alert-info d-flex align-items-center justify-content-between flex-wrap gap-2" role="status">
+                    <span>
+                      <i className="bi bi-lock me-2" aria-hidden="true" />
+                      The Chapter Guide — per-chapter summaries, concepts introduced, and prerequisites — is a Pro feature.
+                    </span>
+                    <Link to="/billing" className="btn btn-primary btn-sm">Upgrade to Pro</Link>
+                  </div>
+                ) : g.chapter_guide?.length ? (
+                  <div className="d-flex flex-column gap-3">
+                    {g.chapter_guide.map((ch, i) => (
+                      <div className="card" key={i}>
+                        <div className="card-body" style={{ padding: '1.1rem 1.25rem' }}>
+                          <div className="section-heading mb-1">{ch.chapter}</div>
+                          <p className="mb-2" style={{ color: 'var(--ink)' }}>{ch.summary}</p>
+                          {ch.concepts_introduced.length > 0 && (
+                            <div className="mb-1" style={{ fontSize: '0.875rem' }}>
+                              <span style={{ color: 'var(--muted)' }}>Introduces: </span>
+                              {ch.concepts_introduced.map((c) => (
+                                <span key={c.id} className="badge text-bg-secondary me-1 mb-1">{c.name}</span>
+                              ))}
+                            </div>
+                          )}
+                          {ch.prerequisites.length > 0 && (
+                            <div style={{ fontSize: '0.875rem' }}>
+                              <span style={{ color: 'var(--muted)' }}>Prerequisites: </span>
+                              {ch.prerequisites.map((c) => (
+                                <span key={c.id} className="badge rounded-pill text-bg-light border me-1 mb-1">{c.name}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: 'var(--muted)' }}>No chapters were detected in this document.</p>
+                )
               )}
 
               {/* ── Chat tab ── */}

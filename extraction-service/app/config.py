@@ -46,6 +46,9 @@ class Settings:
     max_file_bytes: int = field(default_factory=lambda: int(os.environ.get("MAX_FILE_BYTES", str(100 * 1024 * 1024))))
     max_pages: int = field(default_factory=lambda: int(os.environ.get("MAX_PAGES", "500")))
     min_chars: int = field(default_factory=lambda: int(os.environ.get("MIN_TEXT_CHARS", "40")))
+    # OCR quality gate (ING-06): mean Tesseract word confidence (0-100) below this
+    # flags the document low_confidence so the UI warns the reader.
+    ocr_min_confidence: float = field(default_factory=lambda: float(os.environ.get("OCR_MIN_CONFIDENCE", "70")))
 
     # Chunking (prose section-level; token estimate).
     chunk_tokens: int = field(default_factory=lambda: int(os.environ.get("CHUNK_TOKENS", "1200")))

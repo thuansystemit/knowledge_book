@@ -50,6 +50,8 @@ def run_extraction(job_id: str) -> None:
                 job.events = job_events.all_events(job_id)
                 job.error = error
                 job.cost_usd = (graph or {}).get("cost", {}).get("usd") if graph else None
+                _total = (graph or {}).get("stage_timings", {}).get("total_s") if graph else None
+                job.duration_ms = int(_total * 1000) if _total else None
         job_events.mark_done(job_id)
 
 

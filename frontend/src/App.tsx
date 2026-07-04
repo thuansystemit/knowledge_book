@@ -17,6 +17,7 @@ import { UsersPage } from './routes/admin/UsersPage';
 import { CategoriesPage } from './routes/admin/CategoriesPage';
 import { ConfigPage } from './routes/admin/ConfigPage';
 import { CostsPage } from './routes/admin/CostsPage';
+import { MetricsPage } from './routes/admin/MetricsPage';
 import { AboutPage } from './routes/legal/About';
 import { PrivacyPage } from './routes/legal/Privacy';
 import { TermsPage } from './routes/legal/Terms';
@@ -73,6 +74,7 @@ export default function App() {
           <Route path="/admin/categories" element={<CategoriesPage />} />
           <Route path="/admin/config" element={<ConfigPage />} />
           <Route path="/admin/costs" element={<CostsPage />} />
+          <Route path="/admin/metrics" element={<MetricsPage />} />
         </Route>
       </Route>
 

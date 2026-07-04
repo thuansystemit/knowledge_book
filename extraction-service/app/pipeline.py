@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Callable, Optional
 
-from app import embeddings
+from app import chapter_guide, embeddings
 from app.config import Settings
 from app.costs import CostLedger
 from app.domain.graph_schema import NODE_TYPES  # noqa: F401  (kept for callers)
 from app.extraction.chunker import chunk_text
-from app.extraction.text_extractor import classify_pdf, extract_text
+from app.extraction.text_extractor import classify_pdf, extract_text_with_quality
 from app.graph_builder import GraphBuilder
 from app.llm.provider import LlmProvider
 from app.observability import audit
@@ -41,7 +42,18 @@ def run(
     """Run the pipeline. `on_event` (optional) receives stage-progress dicts so a
     UI can render the workflow live: {stage, status, detail?, index?, total?}."""
 
+    # Per-stage wall-clock timing (ACT-05): record the first "running" and the
+    # matching "done"/"error" for each stage.
+    _t0 = time.monotonic()
+    _stage_start: dict[str, float] = {}
+    stage_timings: dict[str, float] = {}
+
     def emit(stage: str, status: str = "running", **fields) -> None:
+        now = time.monotonic()
+        if status == "running" and stage not in _stage_start:
+            _stage_start[stage] = now
+        elif status in ("done", "error") and stage in _stage_start:
+            stage_timings[stage] = round(now - _stage_start[stage], 3)
         if on_event:
             on_event({"stage": stage, "status": status, **fields})
 
@@ -51,11 +63,15 @@ def run(
     emit("classify", "done", detail=f"{pdf_type} ({frac:.0%} digital pages)")
 
     emit("extract_text")
-    text = extract_text(data, "application/pdf")
+    text, ocr_quality = extract_text_with_quality(data, "application/pdf")
     if len(text.strip()) < cfg.min_chars:
         emit("extract_text", "error", detail="unreadable PDF")
         raise ValueError(f"extracted text too short ({len(text.strip())} chars) — unreadable PDF")
-    emit("extract_text", "done", detail=f"{len(text):,} chars")
+    if ocr_quality.get("low_confidence"):
+        emit("extract_text", "done",
+             detail=f"{len(text):,} chars — low OCR quality ({ocr_quality.get('mean_confidence')}%)")
+    else:
+        emit("extract_text", "done", detail=f"{len(text):,} chars")
 
     emit("chunk")
     chunks = chunk_text(text, cfg.chunk_tokens, cfg.chunk_overlap)
@@ -107,7 +123,12 @@ def run(
     # later (retry_failed / POST /api/jobs/{id}/retry-failed) rather than re-running
     # the whole document.
     graph["failed_chunks"] = failed
+    graph["ocr_quality"] = ocr_quality   # OCR confidence gate (ING-06)
     graph["warnings"] = _warnings(len(failed), pdf_type)
+    if ocr_quality.get("low_confidence"):
+        graph["warnings"].append(
+            f"Low OCR quality (mean confidence {ocr_quality.get('mean_confidence')}%"
+            f" on {len(ocr_quality.get('low_pages') or [])} page(s)) — text may contain errors")
     audit("GRAPH_BUILT", **graph["stats"], chunk_errors=len(failed))
     emit("merge", "done", detail=f"{graph['stats']['node_count']} concepts, "
                                  f"{graph['stats']['edge_count']} relations")
@@ -117,8 +138,12 @@ def run(
         graph["brief"] = _make_brief(graph, doc_title, provider, ledger)
         emit("brief", "done")
 
+    # Chapter Guide (OUT-03) — deterministic, no extra LLM call.
+    graph["chapter_guide"] = chapter_guide.build(graph)
+
     graph["cost"] = ledger.summary()
     audit("COST_LEDGER", **graph["cost"])
+    graph["stage_timings"] = {**stage_timings, "total_s": round(time.monotonic() - _t0, 3)}
     emit("done", "done", **graph["stats"])
     return graph
 
@@ -216,9 +241,10 @@ def retry_failed(
     new_graph["document"] = doc
     new_graph["brief"] = graph.get("brief")          # preserve the existing Brief
     new_graph["chunks"] = graph.get("chunks")        # preserve persisted chunks (RC-10)
-    for _k in ("node_vectors", "chunk_vectors", "embedding_model"):  # RC-14 vectors
+    for _k in ("node_vectors", "chunk_vectors", "embedding_model", "ocr_quality"):
         if graph.get(_k) is not None:
             new_graph[_k] = graph[_k]
+    new_graph["chapter_guide"] = chapter_guide.build(new_graph)   # OUT-03 (recompute)
     new_graph["failed_chunks"] = still_failed
     new_graph["warnings"] = _warnings(len(still_failed), doc.get("pdf_type", ""))
     # Accumulate retry cost onto the document's existing ledger (EXT-02).

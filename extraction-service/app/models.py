@@ -9,8 +9,8 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    JSON, Boolean, DateTime, ForeignKey, LargeBinary, Numeric, String, Text,
-    UniqueConstraint,
+    JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String,
+    Text, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -84,6 +84,8 @@ class Job(Base):
     graph: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Estimated per-document LLM cost in USD (EXT-02) — for the ops dashboard.
     cost_usd: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    # End-to-end pipeline wall-clock (ACT-05) — for the latency dashboard.
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -235,6 +237,8 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
     model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Answer latency in ms (ACT-07) — set on assistant messages only.
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     def public(self) -> dict:

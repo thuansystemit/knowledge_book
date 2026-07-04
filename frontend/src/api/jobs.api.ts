@@ -22,6 +22,20 @@ export interface Graph {
   failed_chunks?: unknown[];
   paywall?: Paywall;   // set when the Free tier caps the concept map (PAY-01)
   cost?: { calls: number; input_tokens: number; output_tokens: number; usd: number };  // EXT-02
+  ocr_quality?: {      // OCR confidence gate (ING-06)
+    ocr_used: boolean; mean_confidence?: number | null; low_confidence?: boolean;
+    low_pages?: number[]; threshold?: number;
+  };
+  chapter_guide?: ChapterGuideEntry[];   // OUT-03
+  chapter_guide_locked?: boolean;        // withheld on the Free tier (PAY-01)
+}
+
+export interface ConceptRef { id: string; name: string; }
+export interface ChapterGuideEntry {
+  chapter: string;
+  summary: string;
+  concepts_introduced: ConceptRef[];
+  prerequisites: ConceptRef[];
 }
 export interface JobSummary {
   job_id: string; title: string; status: string;

@@ -106,19 +106,24 @@ def apply_free_tier_caps(graph: dict | None, user: User, cfg: Settings) -> dict 
     paid plans, and uncapped/under-cap graphs pass through unchanged."""
     if not graph or user.role == "admin" or (user.plan or "free") != "free":
         return graph
+    capped = dict(graph)  # shallow copy — never mutate the stored ORM JSON
+
+    # Chapter Guide is a Pro/Scholar feature (PAY-01): withhold it, flag as locked.
+    if capped.get("chapter_guide"):
+        capped["chapter_guide"] = []
+        capped["chapter_guide_locked"] = True
+
+    # Concept-map cap: keep the highest-confidence `plan_free_concepts` nodes.
     cap = cfg.plan_free_concepts
     nodes = graph.get("nodes") or []
     total = len(nodes)
-    if cap <= 0 or total <= cap:
-        return graph
-    kept = nodes[:cap]
-    kept_ids = {n.get("id") for n in kept}
-    edges = [e for e in (graph.get("edges") or [])
-             if e.get("source") in kept_ids and e.get("target") in kept_ids]
-    capped = dict(graph)  # shallow copy — do not mutate the stored ORM JSON
-    capped["nodes"] = kept
-    capped["edges"] = edges
-    capped["paywall"] = {"capped": True, "concepts_shown": cap, "concepts_total": total}
+    if cap > 0 and total > cap:
+        kept = nodes[:cap]
+        kept_ids = {n.get("id") for n in kept}
+        capped["nodes"] = kept
+        capped["edges"] = [e for e in (graph.get("edges") or [])
+                           if e.get("source") in kept_ids and e.get("target") in kept_ids]
+        capped["paywall"] = {"capped": True, "concepts_shown": cap, "concepts_total": total}
     return capped
 
 

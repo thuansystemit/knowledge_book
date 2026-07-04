@@ -113,6 +113,7 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
     # extracted graph — no query-time LLM call. Reuses the same SSE contract
     # (one token frame + a done frame) so the frontend is unchanged.
     if mode != "llm":
+        _qa_t0 = time.monotonic()
         # Previous user turn (for anaphoric follow-ups, RC-17).
         prev_q = next((m.content for m in reversed(history_rows)
                        if m.role == "user" and m.id != user_msg.id), None)
@@ -121,6 +122,7 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
         answer, citations, weak = compose_answer(
             job.graph, user_msg.content, prev_q,
             query_vector=qvec, sim_threshold=cfg.embedding_sim_threshold)
+        qa_latency_ms = int((time.monotonic() - _qa_t0) * 1000)  # ACT-07
         # RC-22: on a weak/not-covered answer, prompt the user to upgrade — but
         # only when upgrading would actually unlock LLM chat (server in LLM mode
         # and this user is gated out by plan; admins never see it).
@@ -133,7 +135,7 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
             with session_scope() as s:
                 s.add(ChatMessage(session_id=session.id, role="assistant",
                                   content=answer, citations=citations,
-                                  model="retrieval-v1"))
+                                  model="retrieval-v1", latency_ms=qa_latency_ms))
             # Stream word-by-word for a natural typing effect (like ChatGPT/Claude)
             # instead of dumping the whole answer at once. The frontend already
             # appends token frames incrementally, so no UI change is needed.
@@ -156,6 +158,7 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
     def gen():
         provider = get_provider(provider_name, model_id)
         parts: list[str] = []
+        _t0 = time.monotonic()
         try:
             for token in provider.stream_chat(system_prompt, history, max_tokens=2048):
                 parts.append(token)
@@ -166,11 +169,13 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
             yield "event: end\ndata: {}\n\n"
             return
         answer = "".join(parts).strip()
+        latency_ms = int((time.monotonic() - _t0) * 1000)  # ACT-07 (generation time)
         # Persist the assistant message.
         with session_scope() as s:
             s.add(ChatMessage(session_id=session.id, role="assistant",
                               content=answer, citations=citations,
-                              model=getattr(provider, "model", provider.name)))
+                              model=getattr(provider, "model", provider.name),
+                              latency_ms=latency_ms))
         yield f"data: {json.dumps({'done': True, 'citations': citations})}\n\n"
         yield "event: end\ndata: {}\n\n"
 

@@ -36,7 +36,7 @@ from app.db import Base, engine, get_db, session_scope
 from app.deps import get_current_user, require_role
 from app.migrations import run_categories, run_models, run_plans, run_tenancy
 from app.model_resolver import get_catalog, invalidate_catalog, resolve as resolve_model, system_default
-from app.models import DocumentFile, Job, OrgModelPolicy, User, UserSettings
+from app.models import ChatMessage, DocumentFile, Job, OrgModelPolicy, User, UserSettings
 from app.observability import audit
 from app.plans import (
     apply_free_tier_caps, effective_chat_mode, enforce_scanned_allowed,
@@ -380,6 +380,50 @@ def admin_costs(admin: User = Depends(require_role("admin")), db=Depends(get_db)
         "avg_usd": round(float(avg), 4), "max_usd": round(float(mx), 4),
         "cap_usd": get_settings().max_doc_cost_usd,
         "top": [{"job_id": j.id, "title": j.title, "cost_usd": float(j.cost_usd)} for j in top],
+    }
+
+
+def _percentile(values: list[float], p: float):
+    if not values:
+        return None
+    s = sorted(values)
+    k = (len(s) - 1) * p
+    f = int(k)
+    return round(s[f] + (s[f + 1] - s[f]) * (k - f)) if f + 1 < len(s) else round(s[f])
+
+
+@app.get("/api/admin/metrics")
+def admin_metrics(admin: User = Depends(require_role("admin")), db=Depends(get_db)):
+    """Latency observability (ACT-05 pipeline + ACT-07 Q&A) for the ops dashboard."""
+    # Pipeline end-to-end (ACT-05)
+    durs = [int(d) for (d,) in db.execute(
+        select(Job.duration_ms).where(Job.duration_ms.isnot(None))).all()]
+    stage_vals: dict[str, list[float]] = {}
+    for (g,) in db.execute(select(Job.graph).where(
+            Job.status == "done", Job.duration_ms.isnot(None))
+            .order_by(Job.created_at.desc()).limit(30)).all():
+        for k, v in ((g or {}).get("stage_timings") or {}).items():
+            if k != "total_s":
+                stage_vals.setdefault(k, []).append(v * 1000)
+    p90 = _percentile(durs, 0.9)
+    # Q&A answer latency (ACT-07)
+    lats = [int(x) for (x,) in db.execute(
+        select(ChatMessage.latency_ms).where(ChatMessage.latency_ms.isnot(None))).all()]
+    qa_median = _percentile(lats, 0.5)
+    return {
+        "pipeline": {
+            "count": len(durs),
+            "p50_ms": _percentile(durs, 0.5), "p90_ms": p90,
+            "max_ms": max(durs) if durs else None,
+            "budget_digital_ms": 300000, "budget_scanned_ms": 720000,
+            "over_budget": bool(p90 and p90 > 720000),
+            "stage_p90_ms": {k: _percentile(v, 0.9) for k, v in stage_vals.items()},
+        },
+        "qa": {
+            "count": len(lats),
+            "median_ms": qa_median, "p95_ms": _percentile(lats, 0.95),
+            "budget_ms": 8000, "over_budget": bool(qa_median and qa_median > 8000),
+        },
     }
 
 
