@@ -14,7 +14,7 @@ import os
 import time
 from typing import Callable, Optional
 
-from app import chapter_guide, embeddings
+from app import chapter_guide, chunk_cache, embeddings
 from app.config import Settings
 from app.costs import CostLedger
 from app.domain.graph_schema import NODE_TYPES  # noqa: F401  (kept for callers)
@@ -176,13 +176,29 @@ def _extract_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
     source_ref = {"chapter": chunk["chapter"], "page_start": chunk["page_start"],
                   "page_end": chunk["page_end"]}
     header = _chunk_header(doc_title, chunk)
+    model_id = getattr(provider, "model", None)
+
+    # EXT-03: reuse a cached extraction (re-process/retry) — no LLM call, no cost.
+    ck = chunk_cache.key(model_id, kg_prompt, header) if chunk_cache.enabled(cfg) else None
+    if ck:
+        cached = chunk_cache.get(ck)
+        if cached is not None:
+            try:
+                builder.add_chunk(json.loads(cached), source_ref)
+                audit("CHUNK_CACHE_HIT", index=chunk["index"])
+                return True
+            except Exception:
+                pass  # corrupt cache entry -> fall through to the LLM
+
     last_err = None
     for attempt in range(cfg.chunk_retries + 1):
         try:
             raw = provider.complete_json(kg_prompt, header, max_tokens=8000)
             if ledger is not None:
-                ledger.add(getattr(provider, "model", None), getattr(provider, "last_usage", None))
+                ledger.add(model_id, getattr(provider, "last_usage", None))
             builder.add_chunk(json.loads(raw), source_ref)
+            if ck:
+                chunk_cache.put(ck, raw, cfg.chunk_cache_ttl_days * 86400)
             if attempt > 0:
                 audit("CHUNK_RECOVERED", index=chunk["index"], attempt=attempt + 1)
             return True

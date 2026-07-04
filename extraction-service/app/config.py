@@ -60,6 +60,10 @@ class Settings:
     # mid-pipeline, the job aborts with FAILED(cost_cap) before overrunning. 0 =
     # disabled. Local/free models never accrue cost, so this never trips them.
     max_doc_cost_usd: float = field(default_factory=lambda: float(os.environ.get("MAX_DOC_COST_USD", "2.0")))
+    # Idempotent chunk-extraction cache (EXT-03): reuse a chunk's result on
+    # re-process/retry instead of re-calling the LLM. Redis-backed, fail-open.
+    chunk_cache_enabled: bool = field(default_factory=lambda: os.environ.get("CHUNK_CACHE_ENABLED", "true").lower() in ("1", "true", "yes"))
+    chunk_cache_ttl_days: int = field(default_factory=lambda: int(os.environ.get("CHUNK_CACHE_TTL_DAYS", "30")))
 
     # --- Semantic retrieval embeddings (RC-14) ------------------------------
     # OFF by default (blank model) -> retrieval stays lexical (RC-11/13), nothing
