@@ -90,6 +90,18 @@ export async function fetchPdfObjectUrl(jobId: string): Promise<string> {
   return URL.createObjectURL(res.data as Blob);
 }
 
+/** Download the document's outputs as Markdown or JSON (OUT-06, Pro/Scholar). */
+export async function exportJob(jobId: string, fmt: 'md' | 'json'): Promise<void> {
+  const res = await api.get(`/api/jobs/${jobId}/export`, { params: { fmt }, responseType: 'blob' });
+  const url = URL.createObjectURL(res.data as Blob);
+  const cd = (res.headers['content-disposition'] as string) || '';
+  const name = /filename="([^"]+)"/.exec(cd)?.[1] ?? `document.${fmt}`;
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** Fetch a 60s stream token, then open an authenticated SSE connection. */
 export async function subscribeEvents(
   jobId: string,

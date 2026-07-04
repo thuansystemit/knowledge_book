@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  deleteJob, getJob, retryFailed, subscribeEvents,
+  deleteJob, exportJob, getJob, retryFailed, subscribeEvents,
   type JobDetail, type StageEvent,
 } from '../api/jobs.api';
 import { GraphView } from '../components/GraphView';
@@ -147,6 +147,12 @@ export function DocumentDetailPage() {
   // Mirror backend `_owned_job`: only the owner or an admin may delete. Viewers
   // never own documents, so they never see the Delete action.
   const canDelete = currentUser?.role === 'admin' || job.user_id === currentUser?.id;
+  // Export is a Pro/Scholar feature (OUT-06); admins too.
+  const canExport = currentUser?.role === 'admin'
+    || currentUser?.plan === 'pro' || currentUser?.plan === 'scholar';
+  const onExport = (fmt: 'md' | 'json') => {
+    if (id) exportJob(id, fmt).catch(() => {});
+  };
 
   return (
     <div>
@@ -159,11 +165,23 @@ export function DocumentDetailPage() {
           {/* Serif title */}
           <h1 className="page-title">{job.title}</h1>
         </div>
-        {canDelete && (
-          <button className="btn btn-outline-danger btn-sm flex-shrink-0" onClick={onDelete}>
-            <i className="bi bi-trash me-1"></i>Delete
-          </button>
-        )}
+        <div className="d-flex gap-2 flex-shrink-0">
+          {canExport && g && (
+            <div className="btn-group">
+              <button className="btn btn-outline-secondary btn-sm" onClick={() => onExport('md')}>
+                <i className="bi bi-download me-1"></i>Markdown
+              </button>
+              <button className="btn btn-outline-secondary btn-sm" onClick={() => onExport('json')}>
+                JSON
+              </button>
+            </div>
+          )}
+          {canDelete && (
+            <button className="btn btn-outline-danger btn-sm" onClick={onDelete}>
+              <i className="bi bi-trash me-1"></i>Delete
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── Workflow (running only) ── */}

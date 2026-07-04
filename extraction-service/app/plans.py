@@ -26,6 +26,11 @@ PLANS = ("free", "pro", "scholar")
 _PLAN_RANK = {"free": 0, "pro": 1, "scholar": 2}
 
 
+def can_export(user: User) -> bool:
+    """Exporting outputs is a Pro/Scholar feature (OUT-06); admins always can."""
+    return user.role == "admin" or (user.plan or "free") in ("pro", "scholar")
+
+
 def effective_chat_mode(user: User, cfg: Settings) -> str:
     """The chat mode this user actually gets (RC-20 value ladder).
 

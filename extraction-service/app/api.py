@@ -38,8 +38,9 @@ from app.migrations import run_categories, run_models, run_plans, run_tenancy
 from app.model_resolver import get_catalog, invalidate_catalog, resolve as resolve_model, system_default
 from app.models import ChatMessage, DocumentFile, Job, OrgModelPolicy, User, UserSettings
 from app.observability import audit
+from app import export as export_mod
 from app.plans import (
-    apply_free_tier_caps, effective_chat_mode, enforce_scanned_allowed,
+    apply_free_tier_caps, can_export, effective_chat_mode, enforce_scanned_allowed,
     enforce_upload_quota, usage as plan_usage,
 )
 from app.ratelimit import upload_limit
@@ -169,6 +170,26 @@ def get_job(job_id: str, user: User = Depends(get_current_user), db=Depends(get_
     # Cheap existence check (selects the key only, not the blob).
     d["has_pdf"] = db.scalar(select(DocumentFile.job_id).where(DocumentFile.job_id == job_id)) is not None
     return d
+
+
+@app.get("/api/jobs/{job_id}/export")
+def export_job(job_id: str, fmt: str = "md",
+               user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Export the document's outputs as Markdown or JSON (OUT-06). Pro/Scholar only."""
+    job = require_job_access(db, user, job_id)
+    if not can_export(user):
+        raise HTTPException(402, "Exporting is a Pro feature. Upgrade to download your outputs.")
+    graph = job.graph or {}
+    if not graph:
+        raise HTTPException(409, "document is not ready")
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in (job.title or "document"))[:80]
+    if fmt == "json":
+        body = export_mod.to_json(graph, job.title)
+        return Response(content=body, media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="{safe}.json"'})
+    body = export_mod.to_markdown(graph, job.title)
+    return Response(content=body, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{safe}.md"'})
 
 
 @app.get("/api/jobs/{job_id}/pdf")
