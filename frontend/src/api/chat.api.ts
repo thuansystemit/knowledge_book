@@ -34,7 +34,7 @@ export function subscribeChatStream(
   msgId: string,
   token: string,
   onToken: (t: string) => void,
-  onDone: (citations: Citation[]) => void,
+  onDone: (citations: Citation[], upgrade?: boolean) => void,
   onError: (msg: string) => void,
 ): () => void {
   const es = new EventSource(
@@ -44,7 +44,7 @@ export function subscribeChatStream(
     try {
       const d = JSON.parse(m.data);
       if (d.error) onError(d.error);
-      else if (d.done) onDone(d.citations || []);
+      else if (d.done) onDone(d.citations || [], !!d.upgrade);
       else if (d.token) onToken(d.token);
     } catch {
       /* ignore malformed frame */

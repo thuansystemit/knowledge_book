@@ -13,7 +13,20 @@ _PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 _CHAPTER_RE = re.compile(r"chapter\s+(\d+|[ivxlc]+)", re.IGNORECASE)
 _STOP = {"the", "a", "an", "of", "to", "and", "or", "is", "are", "what", "how",
          "does", "do", "in", "on", "for", "this", "that", "it", "as", "with",
-         "summarize", "summarise", "explain", "tell", "me", "about", "book"}
+         "summarize", "summarise", "explain", "tell", "me", "about", "book",
+         # common function/filler words — drop so ranking keys on content, not
+         # incidental connectors (improves precision).
+         "so", "every", "one", "two", "keep", "from", "by", "at", "be", "can",
+         "i", "my", "your", "you", "we", "they", "them", "their", "its", "then",
+         "than", "when", "where", "which", "who", "will", "would", "should",
+         "could", "may", "might", "if", "but", "not", "no", "up", "out", "into",
+         "some", "any", "all", "each", "more", "most", "other", "others", "such",
+         "very", "just", "also", "use", "using", "used", "make", "get", "many",
+         "much", "over", "out", "there", "here", "these", "those", "was", "were",
+         "has", "have", "had", "been", "being", "our", "us", "am",
+         # filler verbs/quantifiers so thin follow-ups ("give me examples of it")
+         # resolve to the prior topic instead of matching the filler word.
+         "give", "show", "list", "want", "need", "like", "more", "less", "please"}
 
 
 def _load_prompt(name: str) -> str:
@@ -132,12 +145,57 @@ def _stem(w: str) -> str:
 
 
 def _tokens(text: str) -> list[str]:
-    """Stemmed, stop-word-filtered tokens (RC-11)."""
-    return [_stem(w) for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if w not in _STOP]
+    """Stemmed, stop-word-filtered tokens (RC-11). Drops single-char tokens too,
+    so contraction fragments ("don't" -> "don"/"t") don't create noise matches."""
+    return [_stem(w) for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(w) > 1 and w not in _STOP]
+
+
+# Curated technical-synonym lexicon (RC-13): topically-related software terms so
+# paraphrased questions reach the right concept ("duplicating"->"repeat",
+# "interdependent"->"independent", "stub/throwaway"->"prototype"). This is a
+# limited hand lexicon on purpose — broad open-domain synonymy is what embeddings
+# (RC-14) are for. Groups are software-specific to avoid matching off-topic queries.
+_SYNONYM_GROUPS = [
+    {"duplicate", "duplicating", "duplication", "redundant", "redundancy", "repeat", "repeating", "repetition"},
+    {"coupled", "coupling", "decoupled", "decoupling", "independent", "independence", "interdependent", "interdependence", "orthogonal", "dependency", "dependencies", "dependent"},
+    {"prototype", "prototypes", "prototyping", "throwaway", "disposable", "stub", "mockup", "spike", "sketch"},
+    {"refactor", "refactoring", "restructure", "restructuring", "rework", "cleanup"},
+    {"cache", "caching", "caches", "memoize", "memoization"},
+    {"drawback", "drawbacks", "limitation", "limitations", "downside", "disadvantage", "tradeoff"},
+    {"fast", "faster", "speed", "performance", "latency", "throughput", "slow"},
+    {"bug", "bugs", "defect", "defects", "error", "errors", "fault", "issue"},
+    {"test", "testing", "tests", "verification", "validation"},
+    {"concurrency", "concurrent", "parallel", "parallelism", "threading", "async", "asynchronous"},
+    {"maintainable", "maintainability", "maintenance"},
+    {"readable", "readability", "clarity", "clear"},
+    {"secure", "security", "authentication", "authorization", "auth"},
+    {"abstraction", "abstract", "encapsulation", "encapsulate"},
+]
+
+
+def _build_synonyms() -> dict[str, set[str]]:
+    m: dict[str, set[str]] = {}
+    for group in _SYNONYM_GROUPS:
+        stems = {_stem(w) for w in group}
+        for s in stems:
+            m.setdefault(s, set()).update(stems - {s})
+    return m
+
+
+_SYNONYMS = _build_synonyms()
+
+
+def _expand(stems: set[str]) -> set[str]:
+    """Grow a stem set with its curated synonyms (RC-13)."""
+    out = set(stems)
+    for s in stems:
+        out |= _SYNONYMS.get(s, set())
+    return out
 
 
 def _q_words(question: str) -> set[str]:
-    return set(_tokens(question))
+    return _expand(set(_tokens(question)))
 
 
 def _idf(docs: list[set[str]]) -> dict[str, float]:
@@ -191,6 +249,24 @@ def _match_concepts(graph: dict, q_words: set[str]) -> list[dict]:
     return [n for _, n in scored]
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _semantic_indices(query_vec: list[float], vectors: list, k: int,
+                      threshold: float) -> list[int]:
+    """Indices of the top-k stored vectors with cosine >= threshold (RC-14)."""
+    scored = [(i, _cosine(query_vec, v)) for i, v in enumerate(vectors or [])]
+    scored = [(i, s) for i, s in scored if s >= threshold]
+    scored.sort(key=lambda x: -x[1])
+    return [i for i, _ in scored[:k]]
+
+
 def _best_excerpt(content: str, q_words: set[str], width: int = 360) -> str:
     """A ~width-char verbatim window centred on the first keyword hit (RC-12)."""
     text = " ".join((content or "").split())
@@ -210,14 +286,36 @@ def _chunk_citation(c: dict) -> dict:
             "page_start": c.get("page_start"), "page_end": c.get("page_end")}
 
 
-def compose_answer(graph: dict, question: str) -> tuple[str, list[dict]]:
+# Anaphora that signal a follow-up leaning on the previous turn's topic (RC-17).
+_ANAPHORA = {"it", "its", "they", "them", "their", "that", "this", "these",
+             "those", "one", "ones", "he", "she", "his", "her", "theirs"}
+
+
+def _is_followup(question: str, content_tokens: set[str]) -> bool:
+    """A thin, anaphoric question ("and its drawbacks?") that only makes sense
+    with the previous turn's topic carried in (RC-17)."""
+    raw = set(re.findall(r"[a-z]+", question.lower()))
+    return len(content_tokens) <= 1 and bool(raw & _ANAPHORA)
+
+
+def compose_answer(graph: dict, question: str,
+                   prev_question: str | None = None,
+                   query_vector: list[float] | None = None,
+                   sim_threshold: float = 0.55) -> tuple[str, list[dict], bool]:
     """Deterministically compose an answer from the extracted graph — no LLM.
 
     Stitches the retrieved concept definitions, relationships, and (for
     summary-style questions) the document brief into a readable response.
-    Returns (answer_text, citations)."""
+    `prev_question` (the previous user turn) lets a thin follow-up like "and its
+    drawbacks?" inherit the earlier topic (RC-17). Returns
+    (answer_text, citations, weak) where `weak` is True when nothing matched and
+    the answer is a not-covered / overview fallback (drives the RC-22 upgrade prompt)."""
     brief = graph.get("brief") or {}
     q_words = _q_words(question)
+
+    # RC-17: carry the previous turn's topic into an anaphoric follow-up.
+    if prev_question and _is_followup(question, set(_tokens(question))):
+        q_words |= _q_words(prev_question)
 
     # Summary / thesis questions: answer straight from the brief when available.
     if _is_summary_question(question) and (brief.get("thesis") or brief.get("summary")):
@@ -226,7 +324,7 @@ def compose_answer(graph: dict, question: str) -> tuple[str, list[dict]]:
             parts.append(f"The document's central thesis is: {brief['thesis']}")
         if brief.get("summary"):
             parts.append(brief["summary"])
-        return "\n\n".join(parts), _citations(retrieve(graph, question)[0])
+        return "\n\n".join(parts), _citations(retrieve(graph, question)[0]), False
 
     # RC-15: only answer on a *real* keyword match. Concept name/definition hits
     # are strong signal (>=1 keyword); chunk excerpts need >=2 to avoid surfacing
@@ -234,17 +332,31 @@ def compose_answer(graph: dict, question: str) -> tuple[str, list[dict]]:
     concept_hits = _match_concepts(graph, q_words)
     chunk_hits = _rank_chunks(graph, q_words, k=2, min_overlap=2)
 
+    # RC-14: augment lexical hits with semantic (embedding) matches when a query
+    # vector is available — catches open-domain paraphrases that share no words.
+    if query_vector:
+        nodes = graph.get("nodes") or []
+        have = {n["id"] for n in concept_hits}
+        for i in _semantic_indices(query_vector, graph.get("node_vectors"), 5, sim_threshold):
+            if i < len(nodes) and nodes[i].get("id") not in have:
+                concept_hits.append(nodes[i]); have.add(nodes[i].get("id"))
+        chunks = graph.get("chunks") or []
+        have_c = {c.get("index") for c in chunk_hits}
+        extra = [chunks[i] for i in _semantic_indices(query_vector, graph.get("chunk_vectors"), 2, sim_threshold)
+                 if i < len(chunks) and chunks[i].get("index") not in have_c]
+        chunk_hits = (chunk_hits + extra)[:3]
+
     # Confidence gate: nothing matched -> be honest rather than guess.
     if not concept_hits and not chunk_hits:
         if brief.get("summary"):
             return (
                 "I couldn't find anything in this document matching your question. "
                 f"Here is the document overview:\n\n{brief['summary']}"
-            ), []
+            ), [], True
         return (
             "This document doesn't appear to cover that. Try a specific term from "
             "the document, or rephrase your question."
-        ), []
+        ), [], True
 
     parts: list[str] = []
     citations = _citations(concept_hits[:5])
@@ -281,4 +393,4 @@ def compose_answer(graph: dict, question: str) -> tuple[str, list[dict]]:
         names = ", ".join(n["name"] for n in concept_hits[:5])
         parts.append(f"This document discusses: {names}.")
 
-    return "\n\n".join(parts), citations[:12]
+    return "\n\n".join(parts), citations[:12], False

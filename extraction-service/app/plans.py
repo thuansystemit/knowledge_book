@@ -23,6 +23,22 @@ from app.config import Settings
 from app.models import Job, User
 
 PLANS = ("free", "pro", "scholar")
+_PLAN_RANK = {"free": 0, "pro": 1, "scholar": 2}
+
+
+def effective_chat_mode(user: User, cfg: Settings) -> str:
+    """The chat mode this user actually gets (RC-20 value ladder).
+
+    Free = zero-LLM retrieval chat; Pro/Scholar (and admins) = LLM-synthesized
+    chat when the server is in LLM mode. Returns "llm" only when the server is
+    configured for LLM *and* the user's plan meets `chat_llm_min_plan` (or the
+    user is an admin); otherwise "retrieval"."""
+    if cfg.chat_mode != "llm":
+        return "retrieval"
+    if user.role == "admin":
+        return "llm"
+    need = _PLAN_RANK.get(cfg.chat_llm_min_plan, 1)
+    return "llm" if _PLAN_RANK.get(user.plan or "free", 0) >= need else "retrieval"
 
 
 def monthly_limit(plan: str, cfg: Settings) -> int:

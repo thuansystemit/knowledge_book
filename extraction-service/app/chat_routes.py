@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.access import require_job_access
+from app import embeddings
 from app.chat import build_context, compose_answer
 from app.config import get_settings
 from app.db import get_db, session_scope
@@ -22,6 +23,7 @@ from app.deps import get_current_user
 from app.llm.factory import get_provider
 from app.model_resolver import provider_for, resolve as resolve_model, system_default
 from app.models import ChatMessage, ChatSession, Job, User
+from app.plans import effective_chat_mode
 from app.observability import audit
 from app.ratelimit import chat_limit
 from app.security import make_chat_stream, safe_decode
@@ -67,7 +69,10 @@ def ask(job_id: str, body: AskIn,
     session = _get_or_create_session(db, job_id, user.id)
     # Only resolve a model when an LLM will actually answer; retrieval mode needs
     # none (and avoids per-role model-policy checks for viewers).
-    model_id = resolve_model(db, user, body.model, "chat")[1] if get_settings().chat_mode == "llm" else None
+    # RC-20 value ladder: Free plans always get retrieval (no LLM model resolved),
+    # Pro/Scholar (and admins) get LLM when the server is in LLM mode.
+    llm = effective_chat_mode(user, get_settings()) == "llm"
+    model_id = resolve_model(db, user, body.model, "chat")[1] if llm else None
     msg = ChatMessage(session_id=session.id, role="user", content=question, model=model_id)
     db.add(msg)
     db.commit()
@@ -92,8 +97,11 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
     if not job or not user_msg:
         raise HTTPException(404, "not found")
     session = db.get(ChatSession, user_msg.session_id)
+    user = db.get(User, claims.get("sub"))
 
     cfg = get_settings()
+    # Per-user chat mode (RC-20): Free -> retrieval, Pro/Scholar/admin -> LLM.
+    mode = effective_chat_mode(user, cfg) if user else "retrieval"
     # Build the conversation history (chronological), capped to the last N turns.
     history_rows = db.scalars(
         select(ChatMessage).where(ChatMessage.session_id == session.id)
@@ -104,8 +112,22 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
     # Retrieval mode (default): compose the answer deterministically from the
     # extracted graph — no query-time LLM call. Reuses the same SSE contract
     # (one token frame + a done frame) so the frontend is unchanged.
-    if cfg.chat_mode != "llm":
-        answer, citations = compose_answer(job.graph, user_msg.content)
+    if mode != "llm":
+        # Previous user turn (for anaphoric follow-ups, RC-17).
+        prev_q = next((m.content for m in reversed(history_rows)
+                       if m.role == "user" and m.id != user_msg.id), None)
+        # RC-14: embed the question for semantic matching (None if disabled/failed).
+        qvec = embeddings.embed_query(user_msg.content, cfg) if embeddings.enabled(cfg) else None
+        answer, citations, weak = compose_answer(
+            job.graph, user_msg.content, prev_q,
+            query_vector=qvec, sim_threshold=cfg.embedding_sim_threshold)
+        # RC-22: on a weak/not-covered answer, prompt the user to upgrade — but
+        # only when upgrading would actually unlock LLM chat (server in LLM mode
+        # and this user is gated out by plan; admins never see it).
+        can_upgrade = (cfg.chat_mode == "llm" and user is not None
+                       and user.role != "admin"
+                       and effective_chat_mode(user, cfg) == "retrieval")
+        show_upgrade = bool(weak and can_upgrade)
 
         def gen_retrieval():
             with session_scope() as s:
@@ -121,7 +143,7 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
                 yield f"data: {json.dumps({'token': tok})}\n\n"
                 if delay:
                     time.sleep(delay)
-            yield f"data: {json.dumps({'done': True, 'citations': citations})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'citations': citations, 'upgrade': show_upgrade})}\n\n"
             yield "event: end\ndata: {}\n\n"
 
         return StreamingResponse(gen_retrieval(), media_type="text/event-stream")

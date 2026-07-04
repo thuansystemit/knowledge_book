@@ -39,8 +39,8 @@ from app.model_resolver import get_catalog, invalidate_catalog, resolve as resol
 from app.models import DocumentFile, Job, OrgModelPolicy, User, UserSettings
 from app.observability import audit
 from app.plans import (
-    apply_free_tier_caps, enforce_scanned_allowed, enforce_upload_quota,
-    usage as plan_usage,
+    apply_free_tier_caps, effective_chat_mode, enforce_scanned_allowed,
+    enforce_upload_quota, usage as plan_usage,
 )
 from app.ratelimit import upload_limit
 from app.security import hash_password, make_stream, safe_decode
@@ -261,8 +261,9 @@ def list_models(user: User = Depends(get_current_user), db=Depends(get_db)):
         "default_chat_model": (us.default_chat_model if us else None) or system_default(),
         "require_byo_key": bool(policy.require_byo_key) if policy else False,
         # "retrieval" -> chat answers come from the extracted graph, no LLM at
-        # query time, so the per-answer model picker is irrelevant.
-        "chat_mode": get_settings().chat_mode,
+        # query time, so the per-answer model picker is irrelevant. The mode is
+        # per-user: Free plans get retrieval, Pro/Scholar get LLM (RC-20).
+        "chat_mode": effective_chat_mode(user, get_settings()),
     }
 
 

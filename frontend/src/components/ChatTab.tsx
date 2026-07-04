@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ask, clearHistory, getHistory, subscribeChatStream,
   type ChatMessage, type Citation,
@@ -32,6 +33,8 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
   const [chatMode, setChatMode] = useState<string>('');
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
+  // RC-22: shown when a weak retrieval answer could be improved by upgrading.
+  const [showUpgrade, setShowUpgrade] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { getHistory(jobId).then((h) => setMessages(h.messages)); }, [jobId]);
@@ -50,6 +53,7 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
     setInput('');
     setError(null);
     setBusy(true);
+    setShowUpgrade(false);
     setMessages((m) => [...m, { id: `local-${Date.now()}`, role: 'user', content: question }]);
     setStreaming('');
     try {
@@ -58,11 +62,12 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
       subscribeChatStream(
         jobId, message_id, stream_token,
         (tok) => { acc += tok; setStreaming(acc); },
-        (citations: Citation[]) => {
+        (citations: Citation[], upgrade?: boolean) => {
           setMessages((m) => [
             ...m,
             { id: `a-${Date.now()}`, role: 'assistant', content: acc, citations },
           ]);
+          setShowUpgrade(!!upgrade);
           setStreaming(null);
           setBusy(false);
         },
@@ -165,6 +170,17 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
           </div>
         )}
       </div>
+
+      {/* RC-22: weak retrieval answer -> offer Pro's AI-generated chat */}
+      {showUpgrade && streaming === null && (
+        <div className="alert alert-info d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2" role="status">
+          <span>
+            <i className="bi bi-stars me-2" aria-hidden="true" />
+            Want a fuller answer? Pro adds AI-generated chat over this document.
+          </span>
+          <Link to="/billing" className="btn btn-primary btn-sm">Upgrade to Pro</Link>
+        </div>
+      )}
 
       {error && (
         <div className="alert alert-danger mb-2" role="alert">

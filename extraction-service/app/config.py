@@ -58,6 +58,15 @@ class Settings:
     # disabled. Local/free models never accrue cost, so this never trips them.
     max_doc_cost_usd: float = field(default_factory=lambda: float(os.environ.get("MAX_DOC_COST_USD", "2.0")))
 
+    # --- Semantic retrieval embeddings (RC-14) ------------------------------
+    # OFF by default (blank model) -> retrieval stays lexical (RC-11/13), nothing
+    # changes. Set EMBEDDING_MODEL to enable: concepts+chunks are embedded at
+    # extraction and the chat matches the question vector semantically. Uses an
+    # *embedding* model (no generative LLM), via the same provider hosts.
+    embedding_model: str = field(default_factory=lambda: os.environ.get("EMBEDDING_MODEL", "").strip())
+    embedding_provider: str = field(default_factory=lambda: os.environ.get("EMBEDDING_PROVIDER", "ollama").strip().lower())
+    embedding_sim_threshold: float = field(default_factory=lambda: float(os.environ.get("EMBEDDING_SIM_THRESHOLD", "0.55")))
+
     # Outputs
     output_dir: str = field(default_factory=lambda: os.environ.get("OUTPUT_DIR", "/out"))
     generate_brief: bool = field(default_factory=lambda: os.environ.get("GENERATE_BRIEF", "true").lower() in ("1", "true", "yes"))
@@ -120,6 +129,11 @@ class Settings:
     #        deterministically from the extracted graph (see chat.compose_answer).
     #   "llm" — stream a generated answer from the configured chat model.
     chat_mode: str = field(default_factory=lambda: os.environ.get("CHAT_MODE", "retrieval").strip().lower())
+    # Value ladder (RC-20): the minimum consumer plan that gets LLM-synthesized
+    # chat when CHAT_MODE=llm. Free users below this get zero-LLM retrieval chat.
+    # Admins always get LLM. On-prem/enterprise: set to "free" to give everyone
+    # LLM chat regardless of plan.
+    chat_llm_min_plan: str = field(default_factory=lambda: os.environ.get("CHAT_LLM_MIN_PLAN", "pro").strip().lower())
     # Retrieval-mode answers are computed instantly; stream them word-by-word with
     # this delay (ms) for a natural "typing" effect like ChatGPT/Claude. 0 = send
     # the whole answer at once (RC-21-adjacent UX).

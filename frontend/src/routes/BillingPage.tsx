@@ -21,12 +21,12 @@ const PLANS: Array<{
   {
     id: 'free', name: 'Free', monthly: 0, annual: 0,
     blurb: 'Try it on a couple of documents a month.',
-    features: ['2 documents / month', 'Digital PDFs only', 'Brief + 10-concept map', 'No Q&A or Chapter Guide'],
+    features: ['2 documents / month', 'Digital PDFs only', 'Brief + 10-concept map', 'Grounded Q&A (no AI generation)'],
   },
   {
     id: 'pro', name: 'Pro', monthly: 19, annual: 180,
     blurb: 'For researchers and practitioners who read every week.',
-    features: ['20 documents / month', 'Digital + scanned PDFs', 'All 4 outputs, full concept map', 'Q&A + Chapter Guide', 'Markdown / JSON export'],
+    features: ['20 documents / month', 'Digital + scanned PDFs', 'All 4 outputs, full concept map', 'AI-generated Q&A + Chapter Guide', 'Markdown / JSON export'],
   },
   {
     id: 'scholar', name: 'Scholar', monthly: 35, annual: 336,

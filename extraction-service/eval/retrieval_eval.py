@@ -86,6 +86,13 @@ MORPH_CONCEPT_CASES = [
     ("refactor the codebase", "Refactoring"),
     ("caches everywhere slow me down", "Caching"),
 ]
+# Open-domain paraphrases NOT in the curated synonym lexicon (RC-13) — semantic
+# matches with no shared stem or synonym. Still expected to miss; this is the
+# honest remaining headroom for embeddings (RC-14). Reported, not gated.
+OPEN_PARAPHRASE_CASES = [
+    ("isolate modules so edits don't ripple outward", "Orthogonality"),
+    ("keep one source of truth for every fact", "DRY"),
+]
 # Passage questions -> expected source chapter to appear in a chunk hit
 CHUNK_CASES = [
     ("drawbacks of caching", "Chapter 7"),
@@ -134,8 +141,10 @@ def main() -> int:
     print(f"  not-covered rate : {nc:.2f}   (off-topic honesty)")
     morph = _recall_at_k(3, MORPH_CONCEPT_CASES)
     hard = _recall_at_k(3, HARD_CONCEPT_CASES)
-    print(f"  morphological recall@3 : {morph:.2f}   (stemming — was 0.00 pre-RC-11)")
-    print(f"  hard-paraphrase recall@3 : {hard:.2f}   (informational — headroom for synonyms/embeddings)")
+    opn = _recall_at_k(3, OPEN_PARAPHRASE_CASES)
+    print(f"  morphological recall@3 : {morph:.2f}   (stemming RC-11 — was 0.00)")
+    print(f"  synonym-paraphrase recall@3 : {hard:.2f}   (synonyms RC-13 — was 0.33)")
+    print(f"  open-paraphrase recall@3 : {opn:.2f}   (informational — headroom for embeddings RC-14)")
 
     ok = r3 >= THRESHOLD and nc == 1.0
     print("\nRESULT:", "PASS" if ok else "FAIL")
