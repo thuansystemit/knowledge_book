@@ -488,7 +488,8 @@ export function DocumentDetailPage() {
                     <Link to="/billing" className="btn btn-primary btn-sm">Upgrade to Pro</Link>
                   </div>
                 ) : g.chapter_guide?.length ? (
-                  <div className="d-flex flex-column gap-3">
+                  <div style={{ maxHeight: '62vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
+                    <div className="d-flex flex-column gap-3">
                     {g.chapter_guide.map((ch, i) => (
                       <div className="card" key={i}>
                         <div className="card-body" style={{ padding: '1.1rem 1.25rem' }}>
@@ -513,6 +514,7 @@ export function DocumentDetailPage() {
                         </div>
                       </div>
                     ))}
+                    </div>
                   </div>
                 ) : (
                   <p style={{ color: 'var(--muted)' }}>No chapters were detected in this document.</p>
