@@ -38,6 +38,10 @@ class Settings:
 
     openai_api_key: str = field(default_factory=lambda: os.environ.get("OPENAI_API_KEY", ""))
     openai_model: str = field(default_factory=lambda: os.environ.get("OPENAI_MODEL", "gpt-4o"))
+    # Optional base URL for any OpenAI-compatible endpoint (NVIDIA NIM, Together,
+    # Groq, a local vLLM, …). Blank = the real OpenAI API. e.g.
+    # https://integrate.api.nvidia.com/v1 with OPENAI_MODEL=z-ai/glm-5.2
+    openai_base_url: str = field(default_factory=lambda: os.environ.get("OPENAI_BASE_URL", "").strip())
 
     ollama_base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", "http://192.168.100.158:11434"))
     ollama_model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", "qwen2.5:3b"))
@@ -56,6 +60,11 @@ class Settings:
     # Extra attempts per chunk when the model returns unparseable output (small
     # local models occasionally do). 2 -> up to 3 tries before giving up.
     chunk_retries: int = field(default_factory=lambda: int(os.environ.get("CHUNK_RETRIES", "2")))
+    # Inter-chunk throttle (ms) before each extraction LLM call — paces requests
+    # under provider rate limits (e.g. NVIDIA free tier). 0 = no throttle.
+    chunk_throttle_ms: int = field(default_factory=lambda: int(os.environ.get("CHUNK_THROTTLE_MS", "0")))
+    # SDK-level retry count for cloud providers (429/5xx; respects Retry-After).
+    llm_max_retries: int = field(default_factory=lambda: int(os.environ.get("LLM_MAX_RETRIES", "5")))
     # Per-document hard cost cap in USD (EXT-02). If accrued LLM cost exceeds this
     # mid-pipeline, the job aborts with FAILED(cost_cap) before overrunning. 0 =
     # disabled. Local/free models never accrue cost, so this never trips them.
@@ -109,6 +118,9 @@ class Settings:
     stripe_price_pro_annual: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_PRO_ANNUAL", ""))
     stripe_price_scholar_monthly: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_SCHOLAR_MONTHLY", ""))
     stripe_price_scholar_annual: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_SCHOLAR_ANNUAL", ""))
+    # One-time credit packs (PAY-05): non-expiring extra documents.
+    stripe_price_credits_5: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_CREDITS_5", ""))
+    stripe_price_credits_10: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_CREDITS_10", ""))
     # Where Stripe redirects after checkout (success/cancel) — the SPA origin.
     frontend_base_url: str = field(default_factory=lambda: os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173"))
     jwt_secret: str = field(default_factory=lambda: os.environ.get("JWT_SECRET", "dev-secret-change-me"))

@@ -29,4 +29,8 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,        # one long job at a time per worker slot
     task_ignore_result=True,             # Postgres is the source of truth
     broker_connection_retry_on_startup=True,
+    # With acks_late, the redis broker redelivers a task if it isn't acked within
+    # its visibility_timeout (default 1h) — which duplicated slow, large-model
+    # extractions. Raise it well above the longest expected job (6h).
+    broker_transport_options={"visibility_timeout": 21600},
 )

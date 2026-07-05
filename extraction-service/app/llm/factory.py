@@ -14,14 +14,17 @@ def get_provider(name: str | None = None, model: str | None = None) -> LlmProvid
 
         if not cfg.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not set")
-        return ClaudeProvider(cfg.anthropic_api_key, model or cfg.anthropic_model)
+        return ClaudeProvider(cfg.anthropic_api_key, model or cfg.anthropic_model,
+                              max_retries=cfg.llm_max_retries)
 
     if name == "openai":
         from app.llm.openai_provider import OpenAiProvider
 
         if not cfg.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is not set")
-        return OpenAiProvider(cfg.openai_api_key, model or cfg.openai_model)
+        return OpenAiProvider(cfg.openai_api_key, model or cfg.openai_model,
+                              base_url=cfg.openai_base_url,
+                              max_retries=cfg.llm_max_retries)
 
     if name == "ollama":
         from app.llm.ollama_provider import OllamaProvider

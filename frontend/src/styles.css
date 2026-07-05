@@ -349,6 +349,11 @@ a:hover { color: var(--brand-hover); }
   --bs-btn-color:            #fff;
   --bs-btn-hover-color:      #fff;
   --bs-btn-focus-shadow-rgb: 181, 85, 31;
+  /* Keep disabled state on-brand — Bootstrap otherwise falls back to its
+     default primary blue for a disabled btn-primary. */
+  --bs-btn-disabled-bg:            var(--brand-muted);
+  --bs-btn-disabled-border-color:  var(--brand-muted);
+  --bs-btn-disabled-color:         #fff;
   font-weight: 600;
 }
 

@@ -72,6 +72,13 @@ def run_models() -> None:
         {"provider": "openai", "model_id": "gpt-4o",
          "label": "Best — Alternative (GPT-4o)", "is_local": False, "sort_order": 40, "ce": 2, "cc": 0.1},
     ]
+    # When an OpenAI-compatible endpoint is configured (e.g. NVIDIA NIM), expose
+    # its model in the picker so uploads can route to it (provider = openai +
+    # OPENAI_BASE_URL). Idempotent — added only if the model_id isn't seeded above.
+    if cfg.openai_base_url and cfg.openai_model:
+        seeds.append({"provider": "openai", "model_id": cfg.openai_model,
+                      "label": f"Custom — {cfg.openai_model}", "is_local": False,
+                      "sort_order": 50, "ce": 1, "cc": 0.05})
     with session_scope() as db:
         for s in seeds:
             if db.scalar(select(ModelCatalog).where(ModelCatalog.model_id == s["model_id"])):
@@ -92,6 +99,8 @@ def run_plans() -> None:
         # Stripe billing linkage (PAY-04).
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_status VARCHAR(20) DEFAULT 'none'"))
         conn.execute(text("UPDATE users SET plan_status = 'none' WHERE plan_status IS NULL"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS credits INTEGER DEFAULT 0"))  # PAY-05
+        conn.execute(text("UPDATE users SET credits = 0 WHERE credits IS NULL"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(64)"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(64)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_stripe_customer_id ON users (stripe_customer_id)"))

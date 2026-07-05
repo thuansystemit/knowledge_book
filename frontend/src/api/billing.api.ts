@@ -8,12 +8,14 @@ export interface Usage {
   limit: number | null;   // null = unlimited
   used: number;
   remaining: number | null;
+  credits: number;        // non-expiring extra docs (PAY-05)
   resets_at: string;      // ISO
 }
 
 export interface BillingConfig {
   enabled: boolean;                       // Stripe configured server-side
   available: Record<string, boolean>;     // e.g. { pro_monthly: true, ... }
+  credit_packs: Record<string, boolean>;  // e.g. { "5": true, "10": true }
   current_plan: Plan;
   plan_status: 'none' | 'active' | 'past_due' | 'canceled';
 }
@@ -33,6 +35,12 @@ export async function getBillingConfig(): Promise<BillingConfig> {
 /** Start a Stripe-hosted checkout; returns the URL to redirect the browser to. */
 export async function createCheckout(plan: Exclude<Plan, 'free'>, interval: Interval): Promise<string> {
   const { data } = await api.post<{ url: string }>('/billing/checkout', { plan, interval });
+  return data.url;
+}
+
+/** Buy a one-time credit pack ("5" | "10"); returns the Stripe checkout URL. */
+export async function buyCredits(pack: '5' | '10'): Promise<string> {
+  const { data } = await api.post<{ url: string }>('/billing/credits', { pack });
   return data.url;
 }
 

@@ -14,11 +14,11 @@ from app.llm._json import extract_json_object
 class ClaudeProvider:
     name = "claude"
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, max_retries: int = 5):
         from anthropic import Anthropic
 
         # max_retries -> SDK exponential backoff on 429/5xx/overloaded/timeout.
-        self._client = Anthropic(api_key=api_key, max_retries=3)
+        self._client = Anthropic(api_key=api_key, max_retries=max_retries)
         self.model = model
         self.last_usage: dict | None = None  # token usage of the last complete_json (EXT-02)
 

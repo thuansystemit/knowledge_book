@@ -54,6 +54,8 @@ class User(Base):
     plan: Mapped[str] = mapped_column(String(16), default="free")  # free|pro|scholar
     # Stripe billing linkage (PAY-04). Set by checkout + kept in sync by webhooks.
     plan_status: Mapped[str] = mapped_column(String(20), default="none")  # none|active|past_due|canceled
+    # Non-expiring extra-document credits (PAY-05); consumed after the monthly quota.
+    credits: Mapped[int] = mapped_column(Integer, default=0)
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

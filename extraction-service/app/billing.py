@@ -101,6 +101,33 @@ def create_checkout_session(db: Session, user: User, plan: str, interval: str,
     return session["url"]
 
 
+def credit_packs(cfg: Settings) -> dict[str, tuple[str, int]]:
+    """pack id -> (stripe price id, credits granted) (PAY-05)."""
+    return {"5": (cfg.stripe_price_credits_5, 5), "10": (cfg.stripe_price_credits_10, 10)}
+
+
+def create_credit_checkout(db: Session, user: User, pack: str, cfg: Settings) -> str:
+    """One-time Stripe checkout for a credit pack; returns the URL (PAY-05)."""
+    price, credits = credit_packs(cfg).get(pack, ("", 0))
+    if not price:
+        raise HTTPException(503, f"no Stripe price configured for the {pack}-credit pack")
+    stripe = _stripe(cfg)
+    customer_id = ensure_customer(db, user, cfg)
+    base = cfg.frontend_base_url.rstrip("/")
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        customer=customer_id,
+        client_reference_id=user.id,
+        line_items=[{"price": price, "quantity": 1}],
+        success_url=f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{base}/billing/cancel",
+        metadata={"user_id": user.id, "kind": "credits", "credits": str(credits)},
+        payment_intent_data={"metadata": {"user_id": user.id, "kind": "credits", "credits": str(credits)}},
+    )
+    audit("BILLING_CREDIT_CHECKOUT", user=user.id, pack=pack, credits=credits)
+    return session["url"]
+
+
 def create_portal_session(db: Session, user: User, cfg: Settings) -> str:
     """Create a Stripe billing-portal session so the user can manage/cancel."""
     if not user.stripe_customer_id:
@@ -155,12 +182,20 @@ def handle_event(db: Session, event: dict, cfg: Settings) -> None:
             _user_by_customer(db, obj.get("customer"))
         if not user:
             return
-        plan = (obj.get("metadata") or {}).get("plan") or "pro"
+        meta = obj.get("metadata") or {}
         if obj.get("customer"):
             user.stripe_customer_id = obj["customer"]
-        _apply_active(user, plan, obj.get("subscription"))
-        db.commit()
-        audit("BILLING_ACTIVATED", user=user.id, plan=plan)
+        if meta.get("kind") == "credits":
+            # One-time credit pack (PAY-05): add non-expiring credits, no plan change.
+            n = int(meta.get("credits") or 0)
+            user.credits = (user.credits or 0) + n
+            db.commit()
+            audit("BILLING_CREDITS_ADDED", user=user.id, credits=n, balance=user.credits)
+        else:
+            plan = meta.get("plan") or "pro"
+            _apply_active(user, plan, obj.get("subscription"))
+            db.commit()
+            audit("BILLING_ACTIVATED", user=user.id, plan=plan)
 
     elif etype == "customer.subscription.updated":
         user = _user_by_customer(db, obj.get("customer"))

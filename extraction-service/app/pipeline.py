@@ -190,6 +190,11 @@ def _extract_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
             except Exception:
                 pass  # corrupt cache entry -> fall through to the LLM
 
+    # Throttle actual LLM calls (cache hits above already returned) to stay under
+    # provider rate limits, e.g. the NVIDIA free tier (EXT/rate-limit mitigation).
+    if cfg.chunk_throttle_ms > 0:
+        time.sleep(cfg.chunk_throttle_ms / 1000.0)
+
     last_err = None
     for attempt in range(cfg.chunk_retries + 1):
         try:

@@ -9,6 +9,9 @@ Pillow==10.4.0
 # LLM provider SDKs (used by the respective adapters in app/llm):
 anthropic==0.69.0
 openai==1.51.2
+# Pin httpx < 0.28: openai/anthropic 1.51/0.69 pass the `proxies=` kwarg that
+# httpx 0.28 removed (else OpenAI()/Anthropic() construction raises TypeError).
+httpx==0.27.2
 # HTTP API for the live-workflow dashboard (app/api.py).
 fastapi==0.115.0
 uvicorn==0.30.6

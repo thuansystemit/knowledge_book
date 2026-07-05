@@ -28,6 +28,10 @@ class CheckoutIn(BaseModel):
     interval: str = "monthly"  # monthly | annual
 
 
+class CreditsIn(BaseModel):
+    pack: str       # "5" | "10"
+
+
 @router.get("/config")
 def billing_config(user: User = Depends(get_current_user)):
     cfg = get_settings()
@@ -35,7 +39,8 @@ def billing_config(user: User = Depends(get_current_user)):
     prices = billing._price_map(cfg)
     available = {f"{plan}_{interval}": bool(pid)
                  for (plan, interval), pid in prices.items()}
-    return {"enabled": live, "available": available,
+    credit_packs = {p: bool(price) for p, (price, _n) in billing.credit_packs(cfg).items()}
+    return {"enabled": live, "available": available, "credit_packs": credit_packs,
             "current_plan": user.plan, "plan_status": user.plan_status}
 
 
@@ -44,6 +49,17 @@ def checkout(body: CheckoutIn, user: User = Depends(get_current_user),
              db: Session = Depends(get_db)):
     cfg = get_settings()
     url = billing.create_checkout_session(db, user, body.plan, body.interval, cfg)
+    return {"url": url}
+
+
+@router.post("/credits")
+def buy_credits(body: CreditsIn, user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    cfg = get_settings()
+    # Credit packs are a paid-plan perk (PAY-05); admins allowed too.
+    if user.role != "admin" and (user.plan or "free") not in ("pro", "scholar"):
+        raise HTTPException(402, "Credit packs are available on Pro and Scholar plans.")
+    url = billing.create_credit_checkout(db, user, body.pack, cfg)
     return {"url": url}
 
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { getMe } from '../api/auth.api';
 import {
-  createCheckout, getBillingConfig, getUsage, openPortal,
+  buyCredits, createCheckout, getBillingConfig, getUsage, openPortal,
   type BillingConfig, type Interval, type Plan, type Usage,
 } from '../api/billing.api';
 import { getApiError } from '../lib/utils';
@@ -44,7 +44,7 @@ export function BillingPage() {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [config, setConfig] = useState<BillingConfig | null>(null);
   const [interval, setInterval] = useState<Interval>('monthly');
-  const [busy, setBusy] = useState<Plan | 'portal' | null>(null);
+  const [busy, setBusy] = useState<Plan | 'portal' | 'credits' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,6 +79,16 @@ export function BillingPage() {
     }
   };
 
+  const onBuyCredits = async (pack: '5' | '10') => {
+    setBusy('credits'); setError(null);
+    try {
+      window.location.href = await buyCredits(pack);
+    } catch (e) {
+      setError(getApiError(e, 'Could not start the credit purchase.'));
+      setBusy(null);
+    }
+  };
+
   const pct = usage && usage.limit
     ? Math.min(100, Math.round((usage.used / usage.limit) * 100))
     : 0;
@@ -105,13 +115,20 @@ export function BillingPage() {
                   <span className="badge bg-warning text-dark ms-2">Payment past due</span>
                 )}
               </div>
-              {usage.limit === null ? (
-                <span style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>Unlimited documents this month</span>
-              ) : (
-                <span style={{ color: atLimit ? '#b91c1c' : 'var(--muted)', fontSize: '0.875rem' }}>
-                  {usage.used} / {usage.limit} documents used this month
-                </span>
-              )}
+              <span style={{ fontSize: '0.875rem' }}>
+                {usage.limit === null ? (
+                  <span style={{ color: 'var(--muted)' }}>Unlimited documents this month</span>
+                ) : (
+                  <span style={{ color: atLimit ? '#b91c1c' : 'var(--muted)' }}>
+                    {usage.used} / {usage.limit} documents used this month
+                  </span>
+                )}
+                {usage.credits > 0 && (
+                  <span className="badge text-bg-light border ms-2" title="Non-expiring extra documents">
+                    +{usage.credits} credits
+                  </span>
+                )}
+              </span>
             </div>
             {usage.limit !== null && (
               <div className="progress" style={{ height: 8 }} role="progressbar"
@@ -124,11 +141,24 @@ export function BillingPage() {
                 You&apos;ve used your free documents this month. Upgrade below to keep going.
               </p>
             )}
-            {hasSubscription && (
-              <div className="mt-3">
-                <button className="btn btn-outline-secondary btn-sm" onClick={onManage} disabled={busy === 'portal'}>
-                  {busy === 'portal' ? 'Opening…' : 'Manage subscription'}
-                </button>
+            {(hasSubscription || (currentPlan !== 'free')) && (
+              <div className="mt-3 d-flex flex-wrap gap-2 align-items-center">
+                {hasSubscription && (
+                  <button className="btn btn-outline-secondary btn-sm" onClick={onManage} disabled={busy === 'portal'}>
+                    {busy === 'portal' ? 'Opening…' : 'Manage subscription'}
+                  </button>
+                )}
+                {/* Credit packs — Pro/Scholar top-ups (PAY-05) */}
+                {config?.enabled && config.credit_packs?.['5'] && (
+                  <button className="btn btn-outline-secondary btn-sm" onClick={() => onBuyCredits('5')} disabled={busy === 'credits'}>
+                    {busy === 'credits' ? 'Opening…' : '+5 docs'}
+                  </button>
+                )}
+                {config?.enabled && config.credit_packs?.['10'] && (
+                  <button className="btn btn-outline-secondary btn-sm" onClick={() => onBuyCredits('10')} disabled={busy === 'credits'}>
+                    {busy === 'credits' ? 'Opening…' : '+10 docs'}
+                  </button>
+                )}
               </div>
             )}
           </div>

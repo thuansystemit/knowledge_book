@@ -84,6 +84,7 @@ def usage(db: Session, user: User, cfg: Settings) -> dict:
         "limit": None if unlimited else limit,
         "used": used,
         "remaining": None if unlimited else max(limit - used, 0),
+        "credits": user.credits or 0,          # non-expiring extra docs (PAY-05)
         "resets_at": resets_at.isoformat(),
     }
 
@@ -143,10 +144,17 @@ def enforce_upload_quota(db: Session, user: User, cfg: Settings) -> None:
     if limit <= 0:
         return
     used = used_this_month(db, user)
-    if used >= limit:
-        nxt = "Pro (20 docs/mo)" if user.plan == "free" else "a higher plan"
-        raise HTTPException(
-            402,
-            f"You've used all {limit} documents on your {user.plan.capitalize()} "
-            f"plan this month. Upgrade to {nxt} to keep going.",
-        )
+    if used < limit:
+        return
+    # Monthly quota exhausted — spend a non-expiring credit if the user has any (PAY-05).
+    if (user.credits or 0) > 0:
+        user.credits -= 1
+        db.commit()
+        return
+    nxt = ("Upgrade to Pro (20 docs/mo)" if (user.plan or "free") == "free"
+           else "Buy a credit pack or upgrade")
+    raise HTTPException(
+        402,
+        f"You've used all {limit} documents on your {(user.plan or 'free').capitalize()} "
+        f"plan this month. {nxt} to keep going.",
+    )
