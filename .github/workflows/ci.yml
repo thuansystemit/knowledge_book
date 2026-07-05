@@ -1,0 +1,70 @@
+name: CI
+
+# Gate every PR (and pushes to master) on: backend deps resolve + compile +
+# import smoke + the retrieval-quality eval, and frontend typecheck + build.
+# Enable "Require status checks to pass before merging" in branch protection so
+# a red run blocks the merge (INF-05).
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  backend:
+    name: backend (deps · compile · import · eval)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extraction-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: extraction-service/requirements.txt
+
+      # Validates the pinned dependency set resolves (e.g. the httpx<0.28 pin
+      # that keeps the OpenAI/Anthropic SDKs importable).
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile (syntax check)
+        run: python -m compileall -q app
+
+      # Import the app modules without any services — catches import-time errors.
+      - name: Import smoke test
+        run: |
+          python -c "import app.config, app.chat, app.plans, app.billing, \
+            app.pipeline, app.costs, app.embeddings, app.chapter_guide, \
+            app.chunk_cache, app.export, app.api; print('imports OK')"
+
+      # Retrieval-quality gate (pure Python, no DB/model) — fails on regression.
+      - name: Retrieval eval
+        run: python eval/retrieval_eval.py
+
+  frontend:
+    name: frontend (typecheck · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

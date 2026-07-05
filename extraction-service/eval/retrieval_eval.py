@@ -122,7 +122,7 @@ def _chunk_recall() -> float:
 def _notcovered_rate() -> float:
     ok = 0
     for q in OFFTOPIC:
-        ans, _ = compose_answer(GRAPH, q)
+        ans, _cites, _weak = compose_answer(GRAPH, q)
         if "doesn't appear to cover" in ans or "couldn't find anything" in ans:
             ok += 1
     return ok / len(OFFTOPIC)
