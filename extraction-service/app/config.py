@@ -69,6 +69,10 @@ class Settings:
     chunk_throttle_ms: int = field(default_factory=lambda: int(os.environ.get("CHUNK_THROTTLE_MS", "0")))
     # SDK-level retry count for cloud providers (429/5xx; respects Retry-After).
     llm_max_retries: int = field(default_factory=lambda: int(os.environ.get("LLM_MAX_RETRIES", "5")))
+    # Parallel chunk extraction fan-out (EXT-04 / HAR-03 latency). 1 = sequential
+    # (default, safe). Raise for providers that allow concurrent requests to cut
+    # end-to-end time; keep low (or 1) for rate-limited/free tiers.
+    extract_concurrency: int = field(default_factory=lambda: int(os.environ.get("EXTRACT_CONCURRENCY", "1")))
     # Per-document hard cost cap in USD (EXT-02). If accrued LLM cost exceeds this
     # mid-pipeline, the job aborts with FAILED(cost_cap) before overrunning. 0 =
     # disabled. Local/free models never accrue cost, so this never trips them.

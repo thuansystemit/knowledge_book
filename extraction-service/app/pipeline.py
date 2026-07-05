@@ -39,6 +39,7 @@ def run(
     provider: LlmProvider,
     cfg: Settings,
     on_event: Optional[Callable[[dict], None]] = None,
+    make_provider: Optional[Callable[[], LlmProvider]] = None,
 ) -> dict:
     """Run the pipeline. `on_event` (optional) receives stage-progress dicts so a
     UI can render the workflow live: {stage, status, detail?, index?, total?}."""
@@ -84,16 +85,52 @@ def run(
     failed: list[dict] = []
     ledger = CostLedger()   # per-document cost accounting + hard cap (EXT-02)
 
-    emit("extract", total=len(chunks), index=0)
-    for ch in chunks:
-        chunk = {"index": ch.index, "chapter": ch.chapter,
-                 "page_start": ch.page_start, "page_end": ch.page_end, "content": ch.content}
-        if not _extract_chunk(provider, kg_prompt, doc_title, chunk, builder, cfg, ledger):
-            failed.append(chunk)
-        _enforce_cost_cap(ledger, cfg, emit)   # abort before overrunning the budget
-        emit("extract", total=len(chunks), index=ch.index + 1,
-             detail=f"chapter: {ch.chapter or '(unknown)'}")
-    emit("extract", "done", total=len(chunks), detail=f"{len(failed)} chunk error(s)")
+    chunk_dicts = [{"index": ch.index, "chapter": ch.chapter, "page_start": ch.page_start,
+                    "page_end": ch.page_end, "content": ch.content} for ch in chunks]
+    model_id = getattr(provider, "model", None)
+    concurrency = max(1, cfg.extract_concurrency)
+    total = len(chunk_dicts)
+    emit("extract", total=total, index=0)
+    done = 0
+
+    if concurrency > 1 and make_provider is not None and total > 1:
+        # Parallel fan-out (EXT-04): call chunks concurrently on per-thread
+        # providers; merge in this thread (GraphBuilder/ledger stay single-threaded).
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        _tl = threading.local()
+
+        def _tl_provider() -> LlmProvider:
+            p = getattr(_tl, "p", None)
+            if p is None:
+                p = make_provider(); _tl.p = p
+            return p
+
+        def _work(cd: dict):
+            return cd, _call_chunk(_tl_provider(), kg_prompt, doc_title, cd, cfg)
+
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futures = [ex.submit(_work, cd) for cd in chunk_dicts]
+            try:
+                for fut in as_completed(futures):
+                    cd, result = fut.result()
+                    if not _merge_chunk_result(builder, ledger, model_id, cd, result, cfg):
+                        failed.append(cd)
+                    done += 1
+                    _enforce_cost_cap(ledger, cfg, emit)   # abort before overrunning
+                    emit("extract", total=total, index=done)
+            except CostCapExceeded:
+                ex.shutdown(cancel_futures=True)
+                raise
+    else:
+        for cd in chunk_dicts:
+            if not _extract_chunk(provider, kg_prompt, doc_title, cd, builder, cfg, ledger):
+                failed.append(cd)
+            done += 1
+            _enforce_cost_cap(ledger, cfg, emit)
+            emit("extract", total=total, index=done,
+                 detail=f"chapter: {cd['chapter'] or '(unknown)'}")
+    emit("extract", "done", total=total, detail=f"{len(failed)} chunk error(s)")
 
     emit("merge")
     graph = builder.build()
@@ -194,30 +231,26 @@ def _enforce_cost_cap(ledger: CostLedger, cfg: Settings, emit) -> None:
         raise CostCapExceeded(detail)
 
 
-def _extract_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
-                   chunk: dict, builder: GraphBuilder, cfg: Settings,
-                   ledger: CostLedger | None = None) -> bool:
-    """Extract one chunk into the builder, retrying transient model failures.
-    Returns True on success. Shared by the main run and retry_failed."""
-    source_ref = {"chapter": chunk["chapter"], "page_start": chunk["page_start"],
-                  "page_end": chunk["page_end"]}
+def _call_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
+                chunk: dict, cfg: Settings) -> dict:
+    """Extract one chunk: cache lookup + LLM call + parse. Touches **no shared
+    state** (only its own `provider`), so it is safe to run in a thread pool for
+    the parallel fan-out (EXT-04). Returns a result dict merged later by
+    `_merge_chunk_result`: {parsed, usage, cache_key, raw, from_cache}."""
     header = _chunk_header(doc_title, chunk)
     model_id = getattr(provider, "model", None)
-
-    # EXT-03: reuse a cached extraction (re-process/retry) — no LLM call, no cost.
     ck = chunk_cache.key(model_id, kg_prompt, header) if chunk_cache.enabled(cfg) else None
+
+    # EXT-03: reuse a cached extraction — no LLM call, no cost.
     if ck:
         cached = chunk_cache.get(ck)
         if cached is not None:
             try:
-                builder.add_chunk(json.loads(cached), source_ref)
-                audit("CHUNK_CACHE_HIT", index=chunk["index"])
-                return True
+                return {"parsed": json.loads(cached), "usage": None,
+                        "cache_key": ck, "raw": None, "from_cache": True}
             except Exception:
                 pass  # corrupt cache entry -> fall through to the LLM
 
-    # Throttle actual LLM calls (cache hits above already returned) to stay under
-    # provider rate limits, e.g. the NVIDIA free tier (EXT/rate-limit mitigation).
     if cfg.chunk_throttle_ms > 0:
         time.sleep(cfg.chunk_throttle_ms / 1000.0)
 
@@ -225,19 +258,47 @@ def _extract_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
     for attempt in range(cfg.chunk_retries + 1):
         try:
             raw = provider.complete_json(kg_prompt, header, max_tokens=8000)
-            if ledger is not None:
-                ledger.add(model_id, getattr(provider, "last_usage", None))
-            builder.add_chunk(json.loads(raw), source_ref)
-            if ck:
-                chunk_cache.put(ck, raw, cfg.chunk_cache_ttl_days * 86400)
+            parsed = json.loads(raw)
             if attempt > 0:
                 audit("CHUNK_RECOVERED", index=chunk["index"], attempt=attempt + 1)
-            return True
+            return {"parsed": parsed, "usage": getattr(provider, "last_usage", None),
+                    "cache_key": ck, "raw": raw, "from_cache": False}
         except Exception as e:
             last_err = e
             audit("CHUNK_RETRY", index=chunk["index"], attempt=attempt + 1, error=str(e))
     audit("CHUNK_FAILED", index=chunk["index"], error=str(last_err))
-    return False
+    return {"parsed": None, "usage": None, "cache_key": ck, "raw": None, "from_cache": False}
+
+
+def _merge_chunk_result(builder: GraphBuilder, ledger: CostLedger | None,
+                        model_id: str | None, chunk: dict, result: dict,
+                        cfg: Settings) -> bool:
+    """Merge one chunk's result into the graph (main thread only — GraphBuilder,
+    the cost ledger, and cache writes are single-threaded here)."""
+    parsed = result.get("parsed")
+    if parsed is None:
+        return False
+    source_ref = {"chapter": chunk["chapter"], "page_start": chunk["page_start"],
+                  "page_end": chunk["page_end"]}
+    builder.add_chunk(parsed, source_ref)
+    if result.get("from_cache"):
+        audit("CHUNK_CACHE_HIT", index=chunk["index"])
+        return True
+    if ledger is not None:
+        ledger.add(model_id, result.get("usage"))
+    if result.get("cache_key") and result.get("raw"):
+        chunk_cache.put(result["cache_key"], result["raw"], cfg.chunk_cache_ttl_days * 86400)
+    return True
+
+
+def _extract_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
+                   chunk: dict, builder: GraphBuilder, cfg: Settings,
+                   ledger: CostLedger | None = None) -> bool:
+    """Sequential extract-one-chunk (call + merge). Used by retry_failed and the
+    single-threaded path."""
+    result = _call_chunk(provider, kg_prompt, doc_title, chunk, cfg)
+    return _merge_chunk_result(builder, ledger, getattr(provider, "model", None),
+                               chunk, result, cfg)
 
 
 def _warnings(failed_count: int, pdf_type: str) -> list[str]:

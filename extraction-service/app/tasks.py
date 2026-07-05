@@ -35,8 +35,11 @@ def run_extraction(job_id: str) -> None:
             data = bytes(f.data) if f else None
         if data is None:
             raise ValueError("source file missing")
-        provider = get_provider(provider_name or None, model_id or None)
-        graph = run_pipeline(data, title, provider, cfg, on_event=on_event)
+        def make_provider():   # fresh provider per worker thread (EXT-04 parallel)
+            return get_provider(provider_name or None, model_id or None)
+        provider = make_provider()
+        graph = run_pipeline(data, title, provider, cfg, on_event=on_event,
+                             make_provider=make_provider)
     except Exception as e:
         status, error = "error", str(e)
         audit("JOB_ERROR", job=job_id, error=str(e))
