@@ -63,16 +63,47 @@ def extract_text_with_quality(data: bytes, mime: str) -> tuple[str, dict]:
     raise ValueError(f"unsupported mime: {mime}")
 
 
+def _page_text(page, columns: bool) -> str:
+    """Column-aware page text (HAR-01). Detects a 2-column layout from word
+    x-positions and reads each column top-to-bottom (crop left, then right) to
+    avoid cross-column bleed. Falls back to plain extraction otherwise."""
+    plain = page.extract_text() or ""
+    if not columns:
+        return plain
+    try:
+        words = page.extract_words(use_text_flow=False)
+        width = float(page.width or 0)
+        if len(words) < 12 or width <= 0:
+            return plain
+        mid = width / 2.0
+        spanning = sum(1 for w in words if float(w["x0"]) < mid < float(w["x1"]))
+        left = sum(1 for w in words if float(w["x1"]) <= mid)
+        right = sum(1 for w in words if float(w["x0"]) >= mid)
+        n = len(words)
+        # 2-column when almost no words cross the midline and both sides are full.
+        if spanning <= n * 0.03 and left >= n * 0.2 and right >= n * 0.2:
+            h = float(page.height)
+            lt = (page.crop((0, 0, mid, h)).extract_text() or "").strip()
+            rt = (page.crop((mid, 0, width, h)).extract_text() or "").strip()
+            joined = (lt + "\n\n" + rt).strip()
+            if len(joined) >= len(plain) * 0.6:   # sanity: didn't lose text
+                return joined
+    except Exception:
+        pass
+    return plain
+
+
 def _from_pdf(data: bytes) -> tuple[str, dict]:
     from app.config import get_settings
 
     import pdfplumber
 
+    cols = get_settings().layout_columns
     parts: list[str] = []
     ocr_pages: list[int] = []
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         for i, page in enumerate(pdf.pages):
-            txt = page.extract_text() or ""
+            txt = _page_text(page, cols)
             parts.append(txt)
             if len(txt.strip()) < _PAGE_TEXT_MIN_CHARS:
                 ocr_pages.append(i)

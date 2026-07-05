@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from typing import Callable, Optional
 
@@ -141,11 +142,36 @@ def run(
     # Chapter Guide (OUT-03) — deterministic, no extra LLM call.
     graph["chapter_guide"] = chapter_guide.build(graph)
 
+    # Figure/table captions (HAR-02) — structured, from the extracted text.
+    if cfg.extract_captions:
+        graph["captions"] = _extract_captions(text)
+
     graph["cost"] = ledger.summary()
     audit("COST_LEDGER", **graph["cost"])
     graph["stage_timings"] = {**stage_timings, "total_s": round(time.monotonic() - _t0, 3)}
     emit("done", "done", **graph["stats"])
     return graph
+
+
+_CAPTION_RE = re.compile(
+    r"^\s*((?:figure|fig\.?|table|exhibit)\s+\d+[.:]\s*.{2,140})",
+    re.IGNORECASE | re.MULTILINE)
+
+
+def _extract_captions(text: str) -> list[dict]:
+    """Figure/table captions (HAR-02): lines like "Figure 3: …" / "Table 2. …"
+    as structured {kind, label} entries. Deduped, capped."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for m in _CAPTION_RE.finditer(text or ""):
+        label = " ".join(m.group(1).split())
+        key = label.lower()[:60]
+        if key in seen:
+            continue
+        seen.add(key)
+        kind = "table" if label.lower().startswith(("table", "exhibit")) else "figure"
+        out.append({"kind": kind, "label": label})
+    return out[:60]
 
 
 def _chunk_header(doc_title: str, chunk: dict) -> str:
@@ -262,7 +288,7 @@ def retry_failed(
     new_graph["document"] = doc
     new_graph["brief"] = graph.get("brief")          # preserve the existing Brief
     new_graph["chunks"] = graph.get("chunks")        # preserve persisted chunks (RC-10)
-    for _k in ("node_vectors", "chunk_vectors", "embedding_model", "ocr_quality"):
+    for _k in ("node_vectors", "chunk_vectors", "embedding_model", "ocr_quality", "captions"):
         if graph.get(_k) is not None:
             new_graph[_k] = graph[_k]
     new_graph["chapter_guide"] = chapter_guide.build(new_graph)   # OUT-03 (recompute)

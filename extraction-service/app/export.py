@@ -79,4 +79,11 @@ def to_markdown(graph: dict, title: str) -> str:
             L.append(f"- {e.get('source')} —{e.get('type')}→ {e.get('target')}")
         L.append("")
 
+    captions = graph.get("captions") or []
+    if captions:
+        L += ["## Figures & Tables", ""]
+        for c in captions:
+            L.append(f"- {c.get('label')}")
+        L.append("")
+
     return "\n".join(L).rstrip() + "\n"

@@ -53,6 +53,10 @@ class Settings:
     # OCR quality gate (ING-06): mean Tesseract word confidence (0-100) below this
     # flags the document low_confidence so the UI warns the reader.
     ocr_min_confidence: float = field(default_factory=lambda: float(os.environ.get("OCR_MIN_CONFIDENCE", "70")))
+    # Layout parsing (HAR-01/02): column-aware extraction for 2-column PDFs and
+    # figure/table caption extraction. Both fall back safely if disabled.
+    layout_columns: bool = field(default_factory=lambda: os.environ.get("LAYOUT_COLUMNS", "true").lower() in ("1", "true", "yes"))
+    extract_captions: bool = field(default_factory=lambda: os.environ.get("EXTRACT_CAPTIONS", "true").lower() in ("1", "true", "yes"))
 
     # Chunking (prose section-level; token estimate).
     chunk_tokens: int = field(default_factory=lambda: int(os.environ.get("CHUNK_TOKENS", "1200")))
