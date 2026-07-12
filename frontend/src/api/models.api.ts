@@ -15,6 +15,8 @@ export interface ModelsResponse {
   require_byo_key: boolean;
   /** 'retrieval' (no query-time LLM) or 'llm'. Controls whether chat shows a model picker. */
   chat_mode?: string;
+  /** PAY-06: true when upgrading would unlock AI chat for this user. */
+  chat_upgrade_available?: boolean;
 }
 
 export async function getModels(): Promise<ModelsResponse> {

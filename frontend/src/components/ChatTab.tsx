@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   ask, clearHistory, getHistory, subscribeChatStream,
   type ChatMessage, type Citation,
@@ -9,6 +8,7 @@ import type { Graph } from '../api/jobs.api';
 import { getApiError } from '../lib/utils';
 import { Select } from './Select';
 import { ConfirmDialog } from './ConfirmDialog';
+import { UpgradePrompt } from './UpgradePrompt';
 
 function suggestions(graph: Graph): string[] {
   const out: string[] = [];
@@ -35,12 +35,17 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
   const [clearBusy, setClearBusy] = useState(false);
   // RC-22: shown when a weak retrieval answer could be improved by upgrading.
   const [showUpgrade, setShowUpgrade] = useState(false);
+  // PAY-06: Free user on retrieval mode — AI chat is a Pro upgrade.
+  const [chatUpgrade, setChatUpgrade] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { getHistory(jobId).then((h) => setMessages(h.messages)); }, [jobId]);
   useEffect(() => {
     getModels()
-      .then((m) => { setModels(m.models); setModel(m.default_chat_model); setChatMode(m.chat_mode ?? 'llm'); })
+      .then((m) => {
+        setModels(m.models); setModel(m.default_chat_model); setChatMode(m.chat_mode ?? 'llm');
+        setChatUpgrade(!!m.chat_upgrade_available);  // PAY-06: Q&A gate
+      })
       .catch(() => {});
   }, []);
   useEffect(() => {
@@ -101,6 +106,15 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
 
   return (
     <div className="d-flex flex-column">
+      {/* PAY-06: Q&A-specific paywall prompt — Free users are on keyword search. */}
+      {chatUpgrade && (
+        <UpgradePrompt
+          source="qa"
+          jobId={jobId}
+          compact
+          message="You're using keyword search. Upgrade to Pro for AI-powered answers about this document."
+        />
+      )}
       {/* ── Chat log ── */}
       <div className="chat-log" ref={scrollRef}>
         {empty && (
@@ -171,15 +185,14 @@ export function ChatTab({ jobId, graph }: { jobId: string; graph: Graph }) {
         )}
       </div>
 
-      {/* RC-22: weak retrieval answer -> offer Pro's AI-generated chat */}
+      {/* RC-22 / PAY-06: weak retrieval answer -> offer Pro's AI-generated chat */}
       {showUpgrade && streaming === null && (
-        <div className="alert alert-info d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2" role="status">
-          <span>
-            <i className="bi bi-stars me-2" aria-hidden="true" />
-            Want a fuller answer? Pro adds AI-generated chat over this document.
-          </span>
-          <Link to="/billing" className="btn btn-primary btn-sm">Upgrade to Pro</Link>
-        </div>
+        <UpgradePrompt
+          source="qa_weak"
+          jobId={jobId}
+          compact
+          message="Want a fuller answer? Pro adds AI-generated chat over this document."
+        />
       )}
 
       {error && (

@@ -29,6 +29,9 @@ export function CostsPage() {
     { label: 'Avg / document', value: usd(data.avg_usd) },
     { label: 'Max / document', value: usd(data.max_usd) },
     { label: 'Cap / document', value: data.cap_usd > 0 ? usd(data.cap_usd) : 'off' },
+    ...(data.cap_usd > 0
+      ? [{ label: 'Near cap (≥80%)', value: String(data.near_cap_count) }]
+      : []),
   ];
 
   return (
@@ -78,8 +81,20 @@ export function CostsPage() {
                     <tr key={r.job_id}>
                       <td className="ps-3">
                         <Link to={`/documents/${r.job_id}`} style={{ fontWeight: 500 }}>{r.title}</Link>
+                        {r.by_stage && Object.keys(r.by_stage).length > 0 && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
+                            {Object.entries(r.by_stage).map(([s, v]) => `${s} ${usd(v)}`).join(' · ')}
+                          </div>
+                        )}
                       </td>
-                      <td className="text-end pe-3" style={{ fontVariantNumeric: 'tabular-nums' }}>{usd(r.cost_usd)}</td>
+                      <td className="text-end pe-3" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        {usd(r.cost_usd)}
+                        {r.warn && r.cap_pct != null && (
+                          <span className="badge bg-warning text-dark ms-2" title="≥80% of the per-document cap">
+                            {Math.round(r.cap_pct * 100)}% of cap
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

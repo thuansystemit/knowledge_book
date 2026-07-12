@@ -305,6 +305,8 @@ def list_models(user: User = Depends(get_current_user), db=Depends(get_db)):
     allowed = set(policy.allowed_models) if policy and policy.allowed_models else {m["model_id"] for m in catalog}
     models = [m for m in catalog if m["model_id"] in allowed]
     us = db.get(UserSettings, user.id)
+    _cfg = get_settings()
+    _mode = effective_chat_mode(user, _cfg)
     return {
         "models": models,
         "default_extraction_model": (us.default_extraction_model if us else None) or system_default(),
@@ -313,7 +315,10 @@ def list_models(user: User = Depends(get_current_user), db=Depends(get_db)):
         # "retrieval" -> chat answers come from the extracted graph, no LLM at
         # query time, so the per-answer model picker is irrelevant. The mode is
         # per-user: Free plans get retrieval, Pro/Scholar get LLM (RC-20).
-        "chat_mode": effective_chat_mode(user, get_settings()),
+        "chat_mode": _mode,
+        # PAY-06: true when upgrading would unlock AI chat (system supports LLM
+        # but this user is on retrieval) — drives the Q&A-specific upgrade prompt.
+        "chat_upgrade_available": _cfg.chat_mode == "llm" and _mode == "retrieval",
     }
 
 
@@ -425,11 +430,27 @@ def admin_costs(admin: User = Depends(require_role("admin")), db=Depends(get_db)
         .where(Job.cost_usd.isnot(None))).one()
     top = db.scalars(select(Job).where(Job.cost_usd.isnot(None))
                      .order_by(Job.cost_usd.desc()).limit(10)).all()
+    cap = get_settings().max_doc_cost_usd
+    warn_at = round(0.8 * cap, 4) if cap else None
+    # ACT-04: how many processed docs crossed 80% of the per-doc cap.
+    near_cap = int(db.scalar(select(func.count(Job.id)).where(
+        Job.cost_usd.isnot(None), Job.cost_usd >= 0.8 * cap)) or 0) if cap else 0
+
+    def _top(j):
+        c = float(j.cost_usd)
+        stages = ((j.graph or {}).get("cost") or {}).get("by_stage") if j.graph else None
+        return {
+            "job_id": j.id, "title": j.title, "cost_usd": c,
+            "cap_pct": round(c / cap, 3) if cap else None,
+            "warn": bool(cap and c >= 0.8 * cap),
+            "by_stage": {k: round(v.get("usd", 0), 4) for k, v in stages.items()} if stages else None,
+        }
+
     return {
         "documents": int(cnt), "total_usd": round(float(total), 4),
         "avg_usd": round(float(avg), 4), "max_usd": round(float(mx), 4),
-        "cap_usd": get_settings().max_doc_cost_usd,
-        "top": [{"job_id": j.id, "title": j.title, "cost_usd": float(j.cost_usd)} for j in top],
+        "cap_usd": cap, "warn_threshold_usd": warn_at, "near_cap_count": near_cap,
+        "top": [_top(j) for j in top],
     }
 
 

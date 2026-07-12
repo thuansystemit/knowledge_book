@@ -59,18 +59,30 @@ class CostLedger:
         self.input_tokens = 0
         self.output_tokens = 0
         self.usd = 0.0
+        # ACT-04: per-stage breakdown (e.g. "extraction", "brief") so ops can see
+        # where a document's LLM spend went, not just the total.
+        self.by_stage: dict[str, dict] = {}
 
-    def add(self, model_id: str | None, usage: dict | None) -> None:
-        """Record one LLM call. `usage` is `{input_tokens, output_tokens}` or None
-        (local/free model) — a missing/None usage adds a call at zero cost."""
+    def add(self, model_id: str | None, usage: dict | None,
+            stage: str = "extraction") -> None:
+        """Record one LLM call against a pipeline stage. `usage` is
+        `{input_tokens, output_tokens}` or None (local/free model) — a missing/None
+        usage adds a call at zero cost."""
         self.calls += 1
+        st = self.by_stage.setdefault(
+            stage, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "usd": 0.0})
+        st["calls"] += 1
         if not usage:
             return
         i = int(usage.get("input_tokens") or 0)
         o = int(usage.get("output_tokens") or 0)
+        add_usd = usd_for(model_id, i, o)
         self.input_tokens += i
         self.output_tokens += o
-        self.usd += usd_for(model_id, i, o)
+        self.usd += add_usd
+        st["input_tokens"] += i
+        st["output_tokens"] += o
+        st["usd"] += add_usd
 
     def summary(self) -> dict:
         return {
@@ -78,4 +90,6 @@ class CostLedger:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "usd": round(self.usd, 4),
+            "by_stage": {k: {**v, "usd": round(v["usd"], 4)}
+                         for k, v in self.by_stage.items()},
         }

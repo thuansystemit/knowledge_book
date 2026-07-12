@@ -184,6 +184,14 @@ def run(
         graph["captions"] = _extract_captions(text)
 
     graph["cost"] = ledger.summary()
+    # ACT-04: flag documents whose LLM spend approaches the per-doc cap so the
+    # ops dashboard can warn (the hard abort at 100% lives in _enforce_cost_cap).
+    _cap = cfg.max_doc_cost_usd
+    if _cap:
+        _ratio = round(ledger.usd / _cap, 3)
+        graph["cost"]["cap_usd"] = _cap
+        graph["cost"]["cap_ratio"] = _ratio
+        graph["cost"]["cap_warning"] = _ratio >= 0.8
     audit("COST_LEDGER", **graph["cost"])
     graph["stage_timings"] = {**stage_timings, "total_s": round(time.monotonic() - _t0, 3)}
     emit("done", "done", **graph["stats"])
@@ -389,7 +397,8 @@ def _make_brief(graph: dict, doc_title: str, provider: LlmProvider,
     try:
         raw = provider.complete_json(_load_prompt("brief.txt"), payload, max_tokens=2048)
         if ledger is not None:
-            ledger.add(getattr(provider, "model", None), getattr(provider, "last_usage", None))
+            ledger.add(getattr(provider, "model", None),
+                       getattr(provider, "last_usage", None), stage="brief")
         return json.loads(raw)
     except Exception as e:
         audit("BRIEF_FAILED", error=str(e))

@@ -42,6 +42,11 @@ def run_extraction(job_id: str) -> None:
         provider = make_provider()
         graph = run_pipeline(data, title, provider, cfg, on_event=on_event,
                              make_provider=make_provider)
+        # ACT-04: alert when a document's LLM cost crossed 80% of the cap.
+        _cost = (graph or {}).get("cost") or {}
+        if _cost.get("cap_warning"):
+            audit("COST_ALERT", job=job_id, usd=_cost.get("usd"),
+                  cap=_cost.get("cap_usd"), ratio=_cost.get("cap_ratio"))
     except Exception as e:
         status, error = "error", str(e)
         # Include the traceback tail in ops logs so a bare message like

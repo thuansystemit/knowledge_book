@@ -16,8 +16,13 @@ from app.access import require_job_access
 from app.db import get_db
 from app.deps import get_current_user, require_role
 from app.models import User
+from app.observability import audit
 
 router = APIRouter(prefix="/api/activation", tags=["activation"])
+
+# PAY-06: paywall gates a conversion click can originate from.
+_UPGRADE_SOURCES = {"upload_limit", "concept_cap", "chapter_guide", "qa",
+                    "qa_weak", "export", "scanned", "credits", "other"}
 
 
 class ViewIn(BaseModel):
@@ -43,6 +48,21 @@ def rate(body: RateIn, user: User = Depends(get_current_user), db: Session = Dep
         raise HTTPException(400, "rating must be 'up' or 'down'")
     job = require_job_access(db, user, body.job_id)
     activation.record_rating(db, user.id, body.job_id, body.rating, org_id=job.org_id)
+    return {"ok": True}
+
+
+class UpgradeClickIn(BaseModel):
+    source: str
+    job_id: str | None = None
+
+
+@router.post("/upgrade-click")
+def upgrade_click(body: UpgradeClickIn, user: User = Depends(get_current_user)):
+    """PAY-06: record a conversion signal — the user clicked an upgrade CTA and
+    which paywall gate it came from — so prompt→upgrade intent is measurable."""
+    source = body.source if body.source in _UPGRADE_SOURCES else "other"
+    audit("UPGRADE_CLICK", user_id=user.id, plan=getattr(user, "plan", None),
+          source=source, job=body.job_id)
     return {"ok": True}
 
 

@@ -21,3 +21,17 @@ export async function getActivationStatus(jobId: string): Promise<ActivationStat
   const { data } = await api.get<ActivationStatus>(`/api/activation/status/${jobId}`);
   return data;
 }
+
+/** Paywall gate a conversion click can come from (PAY-06). */
+export type UpgradeSource =
+  | 'upload_limit' | 'concept_cap' | 'chapter_guide' | 'qa' | 'qa_weak'
+  | 'export' | 'scanned' | 'credits' | 'other';
+
+/** PAY-06: record that the user clicked an upgrade CTA (fire-and-forget). */
+export async function trackUpgradeClick(source: UpgradeSource, jobId?: string): Promise<void> {
+  try {
+    await api.post('/api/activation/upgrade-click', { source, job_id: jobId ?? null });
+  } catch {
+    /* telemetry is best-effort — never block the upgrade navigation */
+  }
+}

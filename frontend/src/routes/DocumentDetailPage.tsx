@@ -11,7 +11,8 @@ import { DocumentViewer } from '../components/DocumentViewer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useAuthStore } from '../store/authStore';
 import { getApiError } from '../lib/utils';
-import { getActivationStatus, recordRating, recordView } from '../api/activation.api';
+import { getActivationStatus, recordRating, recordView, trackUpgradeClick } from '../api/activation.api';
+import { UpgradePrompt } from '../components/UpgradePrompt';
 
 type Tab = 'brief' | 'graph' | 'chapters' | 'chat' | 'document';
 
@@ -194,6 +195,18 @@ export function DocumentDetailPage() {
                 JSON
               </button>
             </div>
+          )}
+          {!canExport && g && (
+            /* PAY-06: Free users see a specific, tracked export upgrade affordance */
+            <Link
+              to="/billing"
+              onClick={() => void trackUpgradeClick('export', id)}
+              className="btn btn-outline-secondary btn-sm"
+              title="Export (Markdown/JSON) is a Pro feature"
+            >
+              <i className="bi bi-download me-1" aria-hidden="true"></i>Export
+              <span className="badge bg-warning text-dark ms-1">Pro</span>
+            </Link>
           )}
           {canDelete && (
             <button className="btn btn-outline-secondary btn-sm" onClick={onReprocessClick}
@@ -412,17 +425,19 @@ export function DocumentDetailPage() {
                     </div>
                   </div>
 
-                  {/* Free-tier concept-map cap (PAY-01) */}
+                  {/* Free-tier concept-map cap (PAY-01 / PAY-06 contextual prompt) */}
                   {g.paywall?.capped && (
-                    <div className="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2" role="status">
-                      <span>
-                        Showing <strong>{g.paywall.concepts_shown}</strong> of{' '}
-                        <strong>{g.paywall.concepts_total}</strong> concepts on the Free plan.
-                      </span>
-                      <Link to="/billing" className="btn btn-primary btn-sm">
-                        See all {g.paywall.concepts_total} on Pro
-                      </Link>
-                    </div>
+                    <UpgradePrompt
+                      source="concept_cap"
+                      jobId={id}
+                      variant="warning"
+                      icon="bi-diagram-3"
+                      cta={`See all ${g.paywall.concepts_total} on Pro`}
+                      message={
+                        <>Showing <strong>{g.paywall.concepts_shown}</strong> of{' '}
+                        <strong>{g.paywall.concepts_total}</strong> concepts on the Free plan.</>
+                      }
+                    />
                   )}
 
                   {/* Concept-map rating prompt (ACT-02) — shown once per user/doc */}
@@ -480,13 +495,12 @@ export function DocumentDetailPage() {
               {/* ── Chapter guide tab (OUT-03) ── */}
               {tab === 'chapters' && (
                 g.chapter_guide_locked ? (
-                  <div className="alert alert-info d-flex align-items-center justify-content-between flex-wrap gap-2" role="status">
-                    <span>
-                      <i className="bi bi-lock me-2" aria-hidden="true" />
-                      The Chapter Guide — per-chapter summaries, concepts introduced, and prerequisites — is a Pro feature.
-                    </span>
-                    <Link to="/billing" className="btn btn-primary btn-sm">Upgrade to Pro</Link>
-                  </div>
+                  <UpgradePrompt
+                    source="chapter_guide"
+                    jobId={id}
+                    icon="bi-lock"
+                    message="The Chapter Guide — per-chapter summaries, concepts introduced, and prerequisites — is a Pro feature."
+                  />
                 ) : g.chapter_guide?.length ? (
                   <div style={{ maxHeight: '62vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
                     <div className="d-flex flex-column gap-3">

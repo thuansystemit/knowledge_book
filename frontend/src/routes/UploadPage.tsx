@@ -7,6 +7,7 @@ import { getApiError } from '../lib/utils';
 import { useAuthStore } from '../store/authStore';
 import { ROLE_LABEL } from '../lib/constants';
 import { Select } from '../components/Select';
+import { UpgradePrompt } from '../components/UpgradePrompt';
 
 export function UploadPage() {
   const navigate = useNavigate();
@@ -16,6 +17,7 @@ export function UploadPage() {
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [quotaMsg, setQuotaMsg] = useState<string | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState<string>('');
   const [cats, setCats] = useState<Category[]>([]);
@@ -49,11 +51,19 @@ export function UploadPage() {
   const start = async (file: File) => {
     setBusy(true);
     setError(null);
+    setQuotaMsg(null);
     try {
       const { job_id } = await createJob(file, model || undefined, category || undefined);
       navigate(`/documents/${job_id}`);
     } catch (err: unknown) {
-      setError(getApiError(err, 'Upload failed'));
+      // PAY-06: a 402 is the monthly upload-limit gate — show a specific,
+      // tracked upgrade prompt rather than a generic error.
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 402) {
+        setQuotaMsg(getApiError(err, 'You have reached your monthly upload limit.'));
+      } else {
+        setError(getApiError(err, 'Upload failed'));
+      }
       setBusy(false);
     }
   };
@@ -115,6 +125,13 @@ export function UploadPage() {
           PDF, DOCX, TXT — up to 25MB each
         </p>
       </div>
+
+      {quotaMsg && (
+        <div className="mt-3">
+          <UpgradePrompt source="upload_limit" variant="warning"
+            icon="bi-cloud-arrow-up" message={quotaMsg} />
+        </div>
+      )}
 
       {error && (
         <div className="alert alert-danger mt-3" role="alert">
