@@ -5,6 +5,8 @@ is updated with the final result. The source PDF is read from the DB by job_id
 (not passed through the broker)."""
 from __future__ import annotations
 
+import traceback
+
 from app import job_events
 from app.celery_app import celery_app
 from app.config import get_settings
@@ -42,7 +44,10 @@ def run_extraction(job_id: str) -> None:
                              make_provider=make_provider)
     except Exception as e:
         status, error = "error", str(e)
-        audit("JOB_ERROR", job=job_id, error=str(e))
+        # Include the traceback tail in ops logs so a bare message like
+        # "'str' object has no attribute 'get'" is diagnosable without a repro.
+        audit("JOB_ERROR", job=job_id, error=str(e),
+              trace=traceback.format_exc()[-2000:])
         on_event({"stage": "done", "status": "error", "detail": str(e)})
     finally:
         with session_scope() as db:
@@ -57,6 +62,26 @@ def run_extraction(job_id: str) -> None:
                 job.duration_ms = int(_total * 1000) if _total else None
                 job.ocr_confidence = (graph or {}).get("ocr_quality", {}).get("mean_confidence") if graph else None
         job_events.mark_done(job_id)
+
+
+@celery_app.task(name="generate_interview_prep")
+def generate_interview_prep(plan_id: str) -> None:
+    from app.interview_prep import generate_plan
+    try:
+        generate_plan(plan_id)
+    except Exception as e:
+        from app.interview_prep import prep_publish, prep_mark_done
+        try:
+            with session_scope() as db:
+                from app.models import InterviewPrepPlan
+                plan = db.get(InterviewPrepPlan, plan_id)
+                if plan:
+                    plan.status = "error"
+                    plan.error = str(e)
+        except Exception:
+            pass
+        prep_publish(plan_id, {"stage": "done", "status": "error", "detail": str(e)})
+        prep_mark_done(plan_id)
 
 
 @celery_app.task(name="retry_extraction")

@@ -10,6 +10,7 @@ import { AppFooter } from './AppFooter';
 const PRIMARY_NAV = [
   { to: '/documents/new', label: 'Upload',    end: true, uploader: true },
   { to: '/documents',     label: 'Documents', end: true },
+  { to: '/interview-prep', label: 'Interview Prep', end: true },
 ];
 
 // Admin-only nav links shown inline (styled same as primary)

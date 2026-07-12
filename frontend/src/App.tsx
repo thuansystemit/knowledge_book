@@ -10,6 +10,7 @@ import { LoginPage } from './routes/LoginPage';
 import { DocumentsPage } from './routes/DocumentsPage';
 import { UploadPage } from './routes/UploadPage';
 import { DocumentDetailPage } from './routes/DocumentDetailPage';
+import { InterviewPrepPage } from './routes/InterviewPrepPage';
 import { ProfilePage } from './routes/ProfilePage';
 import { BillingPage } from './routes/BillingPage';
 import { BillingSuccessPage, BillingCancelPage } from './routes/BillingResultPage';
@@ -45,6 +46,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/documents/:id" element={<DocumentDetailPage />} />
+          <Route path="/interview-prep" element={<InterviewPrepPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/billing/success" element={<BillingSuccessPage />} />

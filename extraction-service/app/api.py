@@ -34,7 +34,11 @@ from app.chat_routes import router as chat_router
 from app.config import get_settings
 from app.db import Base, engine, get_db, session_scope
 from app.deps import get_current_user, require_role
-from app.migrations import run_categories, run_models, run_plans, run_tenancy
+from app.interview_prep_routes import router as interview_prep_router
+from app.migrations import (
+    run_categories, run_interview_prep, run_interview_prep_versioning,
+    run_models, run_plans, run_tenancy,
+)
 from app.model_resolver import get_catalog, invalidate_catalog, resolve as resolve_model, system_default
 from app.models import ChatMessage, DocumentFile, Job, OrgModelPolicy, User, UserSettings
 from app.observability import audit
@@ -63,6 +67,7 @@ app.include_router(chat_router)
 app.include_router(category_router)
 app.include_router(billing_router)
 app.include_router(activation_router)
+app.include_router(interview_prep_router)
 
 
 @app.on_event("startup")
@@ -76,6 +81,8 @@ def _startup() -> None:
     run_models()                    # jobs model columns + seed catalog (EF-28)
     _bootstrap_admin(org_id)
     run_categories()                # categories + grants + General backfill (EF-27)
+    run_interview_prep()            # interview_prep_plans + questions tables (IP-01)
+    run_interview_prep_versioning() # version + is_current columns + indexes (IP-06)
 
 
 def _bootstrap_admin(org_id: str) -> None:

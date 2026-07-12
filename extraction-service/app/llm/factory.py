@@ -40,3 +40,10 @@ def get_chat_provider() -> LlmProvider:
     Claude)."""
     cfg = get_settings()
     return get_provider(cfg.chat_provider or None, cfg.chat_model or None)
+
+
+def get_prep_provider() -> LlmProvider:
+    """Provider for interview prep generation. Falls back to chat, then main."""
+    cfg = get_settings()
+    return get_provider(cfg.prep_provider or cfg.chat_provider or None,
+                        cfg.prep_model or cfg.chat_model or None)

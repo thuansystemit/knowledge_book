@@ -5,8 +5,8 @@
 | **Document** | Feature & Work-Item Tracker |
 | **Product** | KnowledgeBook (Document Knowledge Graph) |
 | **Version** | 1.0 |
-| **Date** | 2026-07-05 |
-| **Status** | ACTIVE — 47/66 Done · 5 In Progress · 14 Not Started (see Current status below) |
+| **Date** | 2026-07-08 |
+| **Status** | ACTIVE — 58/77 Done · 5 In Progress · 14 Not Started (see Current status below) |
 | **Owner** | Engineering Lead |
 | **Parents** | `PRD-knowledge-graph-mvp.md` v1.0, `ARCHITECTURE-mvp.md` v1.0, `PLAN-phase1-implementation.md` v1.0, `monetization-pricing.md` v1.0, `gtm-one-pager.md` v1.0 |
 
@@ -297,6 +297,39 @@ Items below are **not in scope for this release**. Record them here rather than 
 | P2-11 | Fine-tuned domain extraction models | PRD WON'T; generic models sufficient for MVP |
 | P2-12 | Reading-app integrations (Kindle, Readwise, Zotero) | PRD WON'T; API-dependent; Phase-3 territory |
 | P2-13 | Annual billing option | Monetization doc recommendation: defer to Month 2 post-launch |
+
+---
+
+---
+
+## Part 14 — Interview Prep (Feature: `interview-prep`)
+
+New feature. Spec: `docs/FEATURE-interview-prep.md` + `docs/FEATURE-interview-prep.ctx.md`.
+Generates a personalized interview preparation plan (study path, topic checklist, practice questions, mock Q&A) grounded in the user's existing ingested documents via RAG. Three tracks: Junior Backend, Senior Backend, System Design.
+
+| ID | Feature / Task | Category | Priority | Phase / Sprint | Owner | Status | Acceptance Criteria | Dependencies |
+|---|---|---|---|---|---|---|---|---|
+| IP-01 | Data model: `interview_prep_plans` and `interview_prep_questions` tables; idempotent `run_interview_prep()` migration wired to startup | Data | Must | Sprint N | E1 | Done | Both tables created on `docker-compose up` with a cold DB; re-running startup is a no-op; all columns listed in spec §5 exist; `UNIQUE(user_id, track)` constraint on plans | INF-02 |
+| IP-02 | Celery task `generate_interview_prep`: corpus scoping via `visible_category_ids`, per-topic retrieval using `chat.retrieve()`, LLM call via `get_prep_provider()`, JSON parsing, cost cap enforcement, SSE event publishing | Backend | Must | Sprint N | E2 | Done | With 1 processed document in the corpus, a task for any track completes with `status=done`; `plan_data` is non-null and valid JSON; ≥10 question rows exist; cost_usd is recorded; a user with no viewable documents gets `status=error` with message "no documents in your library"; cost cap abort works (synthetic test) | IP-01, EXT-01, OUT-04 |
+| IP-03 | API endpoints: POST create, GET list, GET detail, POST regenerate, POST stream-token, GET SSE events, DELETE; `make_prep_stream` in security.py; `get_prep_provider` in llm/factory.py | Backend | Must | Sprint N | E1 | Done | All 7 endpoints return correct status codes; 403 on cross-user access; 400 on invalid track; SSE stream publishes stage events and terminates with `event: end`; stream token rejects after TTL | IP-02 |
+| IP-04 | Frontend: `/interview-prep` route, `InterviewPrepPage`, `TrackCard`, `PrepProgressPanel` (SSE-driven), `PrepPlanView` (Study Path + Checklist + Questions tabs), `QuestionCard` with collapsible model answer | Frontend | Must | Sprint N+1 | E1 | Done | `/interview-prep` renders track picker for a logged-in user; selecting a track and clicking Generate dispatches the creation request; progress panel shows live stage labels; ready state shows at least 10 questions with difficulty badges; empty-corpus state shows an upload prompt | IP-03, UI-01 |
+| IP-05 | RBAC hardening + acceptance run: cross-user isolation test, viewer-role plan creation test, empty-corpus error path, cost cap abort, thin-coverage warning chips in UI | QA | Must | Sprint N+1 | E1+E2 | Done | All 5 acceptance criteria in spec §11 pass; a viewer-role user can create and view their own plan but cannot see another user's plan; thin-coverage topics show warning chips in the UI | IP-04 |
+
+### Part 14b — Interview Prep: Version History (`interview-prep-versioning`)
+
+New sub-feature. Spec: `docs/FEATURE-interview-prep-versioning.md` + `docs/FEATURE-interview-prep-versioning.ctx.md`.
+Every regeneration creates an immutable new version instead of overwriting the current plan. Users can view any past version and pin any previous done version as current. The previous version is never destroyed by a failed or in-progress regeneration.
+
+**Locked design decisions (all resolved):** retention is **unlimited** (no cap, no auto-prune, no `PREP_MAX_VERSIONS_PER_TRACK` setting); failed versions kept in history as status=error; concurrent regen returns 409 hard block; pin/rollback (`POST /pin`) is in scope as a Should deliverable.
+
+| ID | Feature / Task | Category | Priority | Phase / Sprint | Owner | Status | Acceptance Criteria | Dependencies |
+|---|---|---|---|---|---|---|---|---|
+| IP-06 | Data model + migration: add `version` (int) and `is_current` (bool) columns to `interview_prep_plans`; drop `UNIQUE(user_id, track)`; add `UNIQUE(user_id, track, version)` and partial unique index `uix_prep_current WHERE is_current=true`; idempotent `run_interview_prep_versioning()` wired to startup after `run_interview_prep()`; backfill existing rows as version 1; no new config settings | Data | Must | Sprint N+2 | E1 | Done | Both new columns exist with correct types and defaults; partial index enforces at most one `is_current=true` per (user, track) at the DB level; existing `done` rows backfilled as `version=1, is_current=true`; migration is idempotent (safe to re-run on a cold or live DB); no `PREP_MAX_VERSIONS_PER_TRACK` env var exists | IP-01 |
+| IP-07 | Backend — new-version creation + 409 guard: `create_plan` and `regenerate_plan` routes create a new plan row (new plan_id, version=N+1, is_current=false) instead of mutating the existing row; 409 returned if a `pending/generating` version already exists for that track; `generate_plan` Celery task atomically flips is_current on success (bulk-unsets siblings + sets new row in one transaction); no auto-prune — all versions accumulated indefinitely | Backend | Must | Sprint N+2 | E1+E2 | Done | Triggering regenerate creates a new plan_id; old plan row and its questions are untouched; on task success the new row has is_current=true and all siblings have is_current=false; on task error the previous current version is unchanged and retains is_current=true; concurrent regen returns 409 and creates no new row | IP-06, IP-02, IP-03 |
+| IP-08 | Backend — version list + delete promotion + response enrichment: `GET /api/interview-prep/{plan_id}/versions` returns all versions for that (user, track) in descending order with question_count per version (no plan_data in list); `DELETE /api/interview-prep/{plan_id}` now deletes one version and promotes the next most-recent done version to is_current if deleted version was current; `GET /api/interview-prep` filters by is_current=true for non-admin (admin gets `?all_versions=true` flag); add `version` and `is_current` fields to all plan responses | Backend | Must | Sprint N+2 | E1 | Done | `GET /versions` returns correct list with accurate question_count in descending version order; cross-user access returns 403; DELETE on current version promotes replacement (returns new_current_id); DELETE on the only version leaves no current (new_current_id=null); all plan JSON responses include version + is_current | IP-07 |
+| IP-09 | Frontend — version switcher + read-only banner: `VersionSwitcher` dropdown appears in `PrepPlanView` when ≥2 versions exist; each option shows version number, status, relative date, question count, and cost_usd; switching versions fetches and renders the selected version's content; non-current versions show a read-only banner with "Switch to Current" link and "Pin as Current" button; Regenerate button hidden for non-current versions; `TrackCard` shows version number badge and secondary in-progress indicator when a generation is running alongside the current version | Frontend | Must | Sprint N+3 | E1 | Done | Version switcher renders with correct options including cost_usd per version; selecting v1 while v3 is current shows read-only banner and hides Regenerate; TrackCard shows "v3 · Ready" badge and "v4 Generating…" indicator simultaneously; switching back to current version removes the banner | IP-08, IP-04 |
+| IP-10 | Frontend — in-progress generation alongside existing content: while a regeneration is running, the current version remains fully visible and interactive; a progress strip above the version switcher shows the in-progress version's SSE stage labels; on completion the version switcher auto-adds the new version and selects it; `InterviewPrepPage` maintains separate per-track state for `currentPlan` and `inProgressPlan` | Frontend | Must | Sprint N+3 | E1 | Done | User can read the current plan's questions while a new version generates; progress strip shows stage labels from SSE; on done event the switcher updates and selects the new current version automatically; on error event the progress strip shows the error and the current version is unaffected | IP-09 |
+| IP-11 | Backend + Frontend — pin / rollback: `POST /api/interview-prep/{plan_id}/pin` marks a done version as is_current=true and atomically unmarks all siblings in one transaction; frontend "Pin as Current" button in the read-only banner calls this endpoint and refreshes the version switcher to show the newly pinned version as current | Backend + Frontend | Should | Sprint N+3 | E1 | Done | Pinning a done version sets is_current=true on that row and is_current=false on all siblings (atomic, verified by unit test); cross-user pin attempt returns 403; pinning a pending/generating/error version returns 422; after pin, `GET /api/interview-prep` returns the pinned version as current; frontend switcher updates to mark the pinned version as "Current" without page reload | IP-08, IP-09 |
 
 ---
 

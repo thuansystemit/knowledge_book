@@ -59,11 +59,19 @@ class GraphBuilder:
 
     def add_chunk(self, extraction: dict, source_ref: dict) -> None:
         """Fold one chunk's {concepts, relations} into the graph. `source_ref` is
-        {chapter, page_start, page_end} — attached to every node/edge it produced."""
+        {chapter, page_start, page_end} — attached to every node/edge it produced.
+
+        Defensive: the LLM occasionally emits a concept/relation as a bare string
+        (or the whole payload as a non-object). Skip malformed items rather than
+        crashing the entire extraction job on one bad chunk."""
+        if not isinstance(extraction, dict):
+            return
         for c in extraction.get("concepts", []) or []:
-            self._add_concept(c, source_ref)
+            if isinstance(c, dict):
+                self._add_concept(c, source_ref)
         for r in extraction.get("relations", []) or []:
-            self._add_relation(r, source_ref)
+            if isinstance(r, dict):
+                self._add_relation(r, source_ref)
 
     def _add_concept(self, c: dict, source_ref: dict) -> None:
         name = (c.get("name") or "").strip()
@@ -151,6 +159,8 @@ def _clamp(v) -> float:
 def _dedupe_refs(refs: List[dict]) -> List[dict]:
     seen, out = set(), []
     for r in refs:
+        if not isinstance(r, dict):
+            continue
         k = (r.get("chapter", ""), r.get("page_start"), r.get("page_end"))
         if k not in seen:
             seen.add(k)

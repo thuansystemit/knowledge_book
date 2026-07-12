@@ -15,11 +15,14 @@ Returns the default org id.
 """
 from __future__ import annotations
 
-from sqlalchemy import select, text, update
+from sqlalchemy import inspect, select, text, update
 
 from app.config import get_settings
 from app.db import engine, session_scope
-from app.models import Category, CategoryPermission, Job, ModelCatalog, Organization, User
+from app.models import (
+    Category, CategoryPermission, InterviewPrepPlan, InterviewPrepQuestion,
+    Job, ModelCatalog, Organization, User,
+)
 from app.observability import audit
 
 _TENANT_TABLES = ("users", "jobs", "chat_sessions")
@@ -135,3 +138,43 @@ def run_categories() -> None:
                     db.add(CategoryPermission(category_id=gen.id, subject_type="user",
                                               subject_id=u.id, grant_type="upload",
                                               granted_by="system"))
+
+
+def run_interview_prep() -> None:
+    """Create interview_prep_plans + interview_prep_questions tables (idempotent).
+    No Alembic — just a startup check with `inspect().has_table()`."""
+    from app.db import Base
+    insp = inspect(engine)
+    if not insp.has_table("interview_prep_plans"):
+        Base.metadata.create_all(
+            engine,
+            tables=[InterviewPrepPlan.__table__, InterviewPrepQuestion.__table__],
+        )
+
+
+def run_interview_prep_versioning() -> None:
+    """Add version history to interview_prep_plans (IP-06, idempotent).
+
+    Adds `version` + `is_current`, swaps UNIQUE(user_id, track) for
+    UNIQUE(user_id, track, version), and adds a partial unique index so at most
+    one row per (user, track) is current. Backfills existing rows as version 1
+    (a `done` row becomes the current one). Safe on both a fresh DB (columns
+    already present from create_all) and a pre-versioning DB."""
+    if not inspect(engine).has_table("interview_prep_plans"):
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE interview_prep_plans ADD COLUMN IF NOT EXISTS version INTEGER"))
+        conn.execute(text("ALTER TABLE interview_prep_plans ADD COLUMN IF NOT EXISTS is_current BOOLEAN"))
+        conn.execute(text("UPDATE interview_prep_plans SET version = 1 WHERE version IS NULL"))
+        conn.execute(text("UPDATE interview_prep_plans SET is_current = (status = 'done') WHERE is_current IS NULL"))
+        conn.execute(text("ALTER TABLE interview_prep_plans ALTER COLUMN version SET DEFAULT 1"))
+        conn.execute(text("ALTER TABLE interview_prep_plans ALTER COLUMN version SET NOT NULL"))
+        conn.execute(text("ALTER TABLE interview_prep_plans ALTER COLUMN is_current SET DEFAULT false"))
+        conn.execute(text("ALTER TABLE interview_prep_plans ALTER COLUMN is_current SET NOT NULL"))
+        conn.execute(text("ALTER TABLE interview_prep_plans DROP CONSTRAINT IF EXISTS uq_prep_user_track"))
+        conn.execute(text("ALTER TABLE interview_prep_plans DROP CONSTRAINT IF EXISTS uq_prep_user_track_ver"))
+        conn.execute(text("ALTER TABLE interview_prep_plans ADD CONSTRAINT uq_prep_user_track_ver "
+                          "UNIQUE (user_id, track, version)"))
+        conn.execute(text("DROP INDEX IF EXISTS uix_prep_current"))
+        conn.execute(text("CREATE UNIQUE INDEX uix_prep_current ON interview_prep_plans (user_id, track) "
+                          "WHERE is_current = true"))

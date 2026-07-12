@@ -65,6 +65,12 @@ def make_chat_stream(user_id: str, job_id: str, message_id: str) -> str:
                    timedelta(seconds=cfg.chat_stream_token_ttl_sec))
 
 
+def make_prep_stream(user_id: str, plan_id: str) -> str:
+    cfg = get_settings()
+    return _encode({"sub": user_id, "plan": plan_id, "type": "prep-stream"},
+                   timedelta(seconds=cfg.prep_stream_token_ttl_sec))
+
+
 def safe_decode(token: str, expected_type: str) -> dict | None:
     """Decode and require `type`; return None on any failure (no raise)."""
     try:
