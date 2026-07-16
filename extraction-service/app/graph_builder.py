@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 from app.domain.graph_schema import EDGE_TYPES, NODE_TYPES, canonical_key
+from app.extraction.chunker import sanitize_text
 
 
 @dataclass
@@ -74,7 +75,7 @@ class GraphBuilder:
                 self._add_relation(r, source_ref)
 
     def _add_concept(self, c: dict, source_ref: dict) -> None:
-        name = (c.get("name") or "").strip()
+        name = sanitize_text((c.get("name") or "").strip())
         ctype = c.get("type", "Concept")
         if not name or ctype not in NODE_TYPES:
             return
@@ -86,7 +87,7 @@ class GraphBuilder:
         if node is None:
             self._nodes[key] = _Node(
                 name=name, type=ctype,
-                definition=(c.get("definition") or "").strip(),
+                definition=sanitize_text((c.get("definition") or "").strip()),
                 confidence=conf, source_refs=[source_ref],
             )
         else:
@@ -94,7 +95,7 @@ class GraphBuilder:
             if conf > node.confidence:
                 node.confidence = conf
                 if c.get("definition"):
-                    node.definition = c["definition"].strip()
+                    node.definition = sanitize_text(c["definition"].strip())
 
     def _add_relation(self, r: dict, source_ref: dict) -> None:
         rtype = r.get("type")
@@ -109,7 +110,8 @@ class GraphBuilder:
         if edge is None:
             self._edges[key] = _Edge(
                 source=sk, target=tk, type=rtype, confidence=conf,
-                evidence=(r.get("evidence") or "").strip(), source_refs=[source_ref],
+                evidence=sanitize_text((r.get("evidence") or "").strip()),
+                source_refs=[source_ref],
             )
         else:
             edge.source_refs.append(source_ref)

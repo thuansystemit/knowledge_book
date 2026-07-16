@@ -24,7 +24,8 @@ def get_provider(name: str | None = None, model: str | None = None) -> LlmProvid
             raise RuntimeError("OPENAI_API_KEY is not set")
         return OpenAiProvider(cfg.openai_api_key, model or cfg.openai_model,
                               base_url=cfg.openai_base_url,
-                              max_retries=cfg.llm_max_retries)
+                              max_retries=cfg.llm_max_retries,
+                              json_mode=cfg.openai_json_mode)
 
     if name == "ollama":
         from app.llm.ollama_provider import OllamaProvider

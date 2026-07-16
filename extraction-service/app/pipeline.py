@@ -173,7 +173,7 @@ def run(
 
     if cfg.generate_brief:
         emit("brief")
-        graph["brief"] = _make_brief(graph, doc_title, provider, ledger)
+        graph["brief"] = _make_brief(graph, doc_title, provider, ledger, cfg)
         emit("brief", "done")
 
     # Chapter Guide (OUT-03) — deterministic, no extra LLM call.
@@ -265,7 +265,7 @@ def _call_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
     last_err = None
     for attempt in range(cfg.chunk_retries + 1):
         try:
-            raw = provider.complete_json(kg_prompt, header, max_tokens=8000)
+            raw = provider.complete_json(kg_prompt, header, max_tokens=cfg.extract_max_tokens)
             parsed = json.loads(raw)
             if attempt > 0:
                 audit("CHUNK_RECOVERED", index=chunk["index"], attempt=attempt + 1)
@@ -381,7 +381,8 @@ def retry_failed(
 
 
 def _make_brief(graph: dict, doc_title: str, provider: LlmProvider,
-                ledger: CostLedger | None = None) -> Optional[dict]:
+                ledger: CostLedger | None = None,
+                cfg: Settings | None = None) -> Optional[dict]:
     """Synthesise the executive Brief from the top concepts/relations."""
     top_nodes = graph["nodes"][:25]
     concept_lines = [f"- {n['name']} ({n['type']}): {n['definition']}" for n in top_nodes]
@@ -398,10 +399,11 @@ def _make_brief(graph: dict, doc_title: str, provider: LlmProvider,
     # truncated before a complete JSON object exists — extract_json_object then
     # raises "no JSON object found" and the doc ends up with no Brief. Give it
     # generous headroom and one retry so a transient bad response doesn't drop it.
+    _brief_max = cfg.brief_max_tokens if cfg is not None else 6000
     last_err: Exception | None = None
     for _attempt in range(2):
         try:
-            raw = provider.complete_json(_load_prompt("brief.txt"), payload, max_tokens=6000)
+            raw = provider.complete_json(_load_prompt("brief.txt"), payload, max_tokens=_brief_max)
             if ledger is not None:
                 ledger.add(getattr(provider, "model", None),
                            getattr(provider, "last_usage", None), stage="brief")

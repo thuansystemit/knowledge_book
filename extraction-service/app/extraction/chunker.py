@@ -12,6 +12,15 @@ from typing import List
 
 PAGE_MARKER = "\f"
 
+# EFT-03: strip C0 control chars except tab(\x09), newline(\x0a), CR(\x0d),
+# and form-feed(\x0c). Prevents NUL bytes from reaching the JSON graph column.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0e-\x1f]")
+
+
+def sanitize_text(text: str) -> str:
+    """Strip C0 control chars except tab/newline/CR/FF. Idempotent."""
+    return _CONTROL_RE.sub("", text)
+
 # Heading heuristics: short lines that look like a chapter/section title.
 # Mirrors the Sprint-0 finding that font cues aren't in the text stream, so we
 # fall back to textual patterns. Three independent shapes:
@@ -76,7 +85,7 @@ def chunk_text(text: str, max_tokens: int = 1200, overlap_tokens: int = 150) -> 
             tokens += max(1, _estimate_tokens(lines[j][0]))
             j += 1
         window = lines[i:j]
-        content = "\n".join(ln for ln, _, _ in window).strip()
+        content = sanitize_text("\n".join(ln for ln, _, _ in window).strip())
         if content:
             chunks.append(
                 Chunk(

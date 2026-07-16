@@ -174,6 +174,15 @@ class Settings:
     prep_max_context_nodes: int = field(default_factory=lambda: int(os.environ.get("PREP_MAX_CONTEXT_NODES", "40")))
     prep_topics_per_batch: int = field(default_factory=lambda: int(os.environ.get("PREP_TOPICS_PER_BATCH", "3")))
 
+    # --- Extraction reliability (EFT-*) ----------------------------------------
+    # Per-chunk extraction max tokens (base; escalated on retry).
+    extract_max_tokens: int = field(default_factory=lambda: int(os.environ.get("EXTRACT_MAX_TOKENS", "8000")))
+    # Brief synthesis max tokens (base; escalated on retry).
+    brief_max_tokens: int = field(default_factory=lambda: int(os.environ.get("BRIEF_MAX_TOKENS", "6000")))
+    # OpenAI-compatible endpoint JSON mode: "auto" (detect on first call),
+    # "force" (always send response_format), "off" (prompt-only, current behavior).
+    openai_json_mode: str = field(default_factory=lambda: os.environ.get("OPENAI_JSON_MODE", "auto").strip().lower())
+
 
 def get_settings() -> Settings:
     """Fresh settings after re-reading the mounted .env."""
