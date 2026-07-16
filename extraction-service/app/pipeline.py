@@ -13,6 +13,7 @@ import json
 import os
 import re
 import time
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from app import chapter_guide, chunk_cache, embeddings
@@ -31,6 +32,22 @@ _PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 def _load_prompt(name: str) -> str:
     with open(os.path.join(_PROMPT_DIR, name), "r", encoding="utf-8") as f:
         return f.read()
+
+
+@dataclass
+class RetryPolicy:
+    """Escalating retry parameters (EFT-07): each attempt gets more token headroom
+    and a lower temperature, so a truncated/creative failure is likely fixed by the
+    next, stricter attempt. Attempt 0 = provider defaults."""
+    base_max_tokens: int
+    max_attempts: int = 3
+    token_multipliers: tuple = (1.0, 1.5, 2.0)
+    temperatures: tuple = (None, 0.3, 0.1)  # None = provider default
+
+    def params(self, attempt: int) -> dict:
+        i = min(attempt, len(self.token_multipliers) - 1)
+        return {"max_tokens": int(self.base_max_tokens * self.token_multipliers[i]),
+                "temperature": self.temperatures[i]}
 
 
 def run(
@@ -262,18 +279,23 @@ def _call_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
     if cfg.chunk_throttle_ms > 0:
         time.sleep(cfg.chunk_throttle_ms / 1000.0)
 
+    policy = RetryPolicy(cfg.extract_max_tokens, max_attempts=cfg.chunk_retries + 1)
     last_err = None
-    for attempt in range(cfg.chunk_retries + 1):
+    for attempt in range(policy.max_attempts):
+        p = policy.params(attempt)
         try:
-            raw = provider.complete_json(kg_prompt, header, max_tokens=cfg.extract_max_tokens)
+            raw = provider.complete_json(kg_prompt, header,
+                                         max_tokens=p["max_tokens"], temperature=p["temperature"])
             parsed = json.loads(raw)
             if attempt > 0:
-                audit("CHUNK_RECOVERED", index=chunk["index"], attempt=attempt + 1)
+                audit("CHUNK_RECOVERED", index=chunk["index"], attempt=attempt + 1,
+                      max_tokens=p["max_tokens"])
             return {"parsed": parsed, "usage": getattr(provider, "last_usage", None),
                     "cache_key": ck, "raw": raw, "from_cache": False}
         except Exception as e:
             last_err = e
-            audit("CHUNK_RETRY", index=chunk["index"], attempt=attempt + 1, error=str(e))
+            audit("CHUNK_RETRY", index=chunk["index"], attempt=attempt + 1,
+                  max_tokens=p["max_tokens"], temperature=p["temperature"], error=str(e))
     audit("CHUNK_FAILED", index=chunk["index"], error=str(last_err))
     return {"parsed": None, "usage": None, "cache_key": ck, "raw": None, "from_cache": False}
 
@@ -400,15 +422,30 @@ def _make_brief(graph: dict, doc_title: str, provider: LlmProvider,
     # raises "no JSON object found" and the doc ends up with no Brief. Give it
     # generous headroom and one retry so a transient bad response doesn't drop it.
     _brief_max = cfg.brief_max_tokens if cfg is not None else 6000
+    policy = RetryPolicy(_brief_max)
     last_err: Exception | None = None
-    for _attempt in range(2):
+    for attempt in range(policy.max_attempts):
+        p = policy.params(attempt)
         try:
-            raw = provider.complete_json(_load_prompt("brief.txt"), payload, max_tokens=_brief_max)
+            raw = provider.complete_json(_load_prompt("brief.txt"), payload,
+                                         max_tokens=p["max_tokens"], temperature=p["temperature"])
             if ledger is not None:
                 ledger.add(getattr(provider, "model", None),
                            getattr(provider, "last_usage", None), stage="brief")
             return json.loads(raw)
-        except Exception as e:  # noqa: BLE001 — LLM/parse failure: retry, then give up
+        except Exception as e:  # noqa: BLE001 — LLM/parse failure: escalate, then give up
             last_err = e
+            audit("BRIEF_RETRY", attempt=attempt + 1, max_tokens=p["max_tokens"])
     audit("BRIEF_FAILED", error=str(last_err))
     return None
+
+
+def regenerate_brief(graph: dict, doc_title: str, provider: LlmProvider,
+                     cfg: Settings) -> Optional[dict]:
+    """Re-generate ONLY the Brief from an already-extracted graph (EFT-08). Does
+    NOT re-extract chunks — used to repair documents left with `brief: null`."""
+    ledger = CostLedger()
+    brief = _make_brief(graph, doc_title, provider, ledger, cfg)
+    if brief is not None:
+        audit("BRIEF_REGENERATED", title=doc_title, usd=round(ledger.usd, 4))
+    return brief

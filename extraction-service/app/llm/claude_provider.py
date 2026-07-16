@@ -33,7 +33,10 @@ class ClaudeProvider:
             for text in stream.text_stream:
                 yield text
 
-    def complete_json(self, system_prompt: str, user_text: str, max_tokens: int = 8000) -> str:
+    def complete_json(self, system_prompt: str, user_text: str, max_tokens: int = 8000,
+                      temperature: float | None = None) -> str:
+        # `temperature` is accepted for interface parity but ignored: extended
+        # ("adaptive") thinking on Opus 4.8 does not allow a temperature override.
         resp = self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,

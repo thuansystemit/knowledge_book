@@ -53,7 +53,8 @@ class OpenAiProvider:
             if delta:
                 yield delta
 
-    def complete_json(self, system_prompt: str, user_text: str, max_tokens: int = 8000) -> str:
+    def complete_json(self, system_prompt: str, user_text: str, max_tokens: int = 8000,
+                      temperature: float | None = None) -> str:
         kwargs: dict = {
             "model": self.model,
             "max_tokens": max_tokens,
@@ -62,6 +63,8 @@ class OpenAiProvider:
                 {"role": "user", "content": user_text},
             ],
         }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         use_json_mode = self._should_use_json_mode()
         if use_json_mode:
             kwargs["response_format"] = {"type": "json_object"}

@@ -14,7 +14,7 @@ from app.db import session_scope
 from app.llm.factory import get_provider
 from app.models import DocumentFile, Job
 from app.observability import audit
-from app.pipeline import retry_failed, run as run_pipeline
+from app.pipeline import regenerate_brief, retry_failed, run as run_pipeline
 
 
 @celery_app.task(name="run_extraction")
@@ -123,3 +123,34 @@ def retry_extraction(job_id: str) -> None:
                 job.events = job_events.all_events(job_id)
                 job.error = error
         job_events.mark_done(job_id)
+
+
+@celery_app.task(name="backfill_briefs")
+def backfill_briefs(job_ids: list[str]) -> None:
+    """EFT-08: regenerate the Brief for docs left with `brief: null`, without
+    re-extracting chunks. Reuses each job's original provider/model."""
+    cfg = get_settings()
+    for jid in job_ids:
+        try:
+            with session_scope() as db:
+                job = db.get(Job, jid)
+                if not job or not job.graph:
+                    continue
+                if (job.graph.get("brief") is not None):
+                    continue  # already has a Brief — skip
+                graph = job.graph
+                title = job.title
+                provider_name, model_id = job.llm_provider, job.extraction_model
+            provider = get_provider(provider_name or None, model_id or None)
+            brief = regenerate_brief(graph, title, provider, cfg)
+            if brief is None:
+                continue
+            with session_scope() as db:
+                job = db.get(Job, jid)
+                if job and job.graph is not None:
+                    g = dict(job.graph)
+                    g["brief"] = brief          # reassign (JSON column) so it persists
+                    job.graph = g
+            audit("BRIEF_BACKFILLED", job=jid)
+        except Exception as e:  # noqa: BLE001 — one bad doc must not stop the batch
+            audit("BRIEF_BACKFILL_ERROR", job=jid, error=str(e))

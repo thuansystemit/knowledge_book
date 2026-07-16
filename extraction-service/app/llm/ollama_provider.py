@@ -37,8 +37,9 @@ class OllamaProvider:
                 if chunk.get("done"):
                     return
 
-    def complete_json(self, system_prompt: str, user_text: str, max_tokens: int = 8000) -> str:
-        body = json.dumps({
+    def complete_json(self, system_prompt: str, user_text: str, max_tokens: int = 8000,
+                      temperature: float | None = None) -> str:
+        payload_body: dict = {
             "model": self.model,
             "format": "json",
             "stream": False,
@@ -46,7 +47,10 @@ class OllamaProvider:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ],
-        }).encode("utf-8")
+        }
+        if temperature is not None:
+            payload_body["options"] = {"temperature": temperature}
+        body = json.dumps(payload_body).encode("utf-8")
         req = urllib.request.Request(
             f"{self.base_url}/api/chat", data=body,
             headers={"Content-Type": "application/json"},

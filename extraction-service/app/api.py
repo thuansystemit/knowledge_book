@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 
 from app import job_events
 from app.access import general_category_id, require_category, require_job_access, visible_category_ids
@@ -49,7 +49,7 @@ from app.plans import (
 )
 from app.ratelimit import upload_limit
 from app.security import hash_password, make_stream, safe_decode
-from app.tasks import retry_extraction, run_extraction
+from app.tasks import backfill_briefs, retry_extraction, run_extraction
 
 app = FastAPI(title="KnowledgeBook Extraction API")
 
@@ -452,6 +452,32 @@ def admin_costs(admin: User = Depends(require_role("admin")), db=Depends(get_db)
         "cap_usd": cap, "warn_threshold_usd": warn_at, "near_cap_count": near_cap,
         "top": [_top(j) for j in top],
     }
+
+
+class BackfillBriefsIn(BaseModel):
+    doc_ids: list[str] | None = None
+    all_missing: bool = False
+
+
+@app.post("/api/admin/backfill-briefs")
+def backfill_briefs_endpoint(body: BackfillBriefsIn,
+                             admin: User = Depends(require_role("admin")),
+                             db=Depends(get_db)):
+    """EFT-08: queue Brief regeneration for docs with `brief: null` (or a given
+    list). Runs async in the worker; existing graph/chunks are untouched."""
+    if body.all_missing:
+        # graph is a `json` column (not jsonb) and may hold control chars, so
+        # match on the text form rather than a jsonb operator.
+        rows = db.execute(text(
+            "SELECT id FROM jobs WHERE status='done' AND graph IS NOT NULL "
+            r"AND graph::text ~ '\"brief\":\s*null'")).all()
+        ids = [r[0] for r in rows]
+    else:
+        ids = list(body.doc_ids or [])
+    if not ids:
+        return {"queued": 0, "job_ids": []}
+    backfill_briefs.delay(ids)
+    return {"queued": len(ids), "job_ids": ids}
 
 
 def _percentile(values: list[float], p: float):

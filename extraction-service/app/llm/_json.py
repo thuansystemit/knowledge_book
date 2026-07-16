@@ -36,4 +36,54 @@ def extract_json_object(text: str) -> dict:
             return json.loads(text[start : end + 1])
         except json.JSONDecodeError:
             pass
+    # 4. Repair/salvage a truncated object (EFT-06) — last resort before failing.
+    repaired = _repair_json(text)
+    if repaired is not None:
+        repaired["repaired"] = True
+        try:
+            from app.observability import audit
+            audit("CHUNK_REPAIRED", chars=len(text))
+        except Exception:
+            pass
+        return repaired
     raise json.JSONDecodeError("no JSON object found in model response", text, 0)
+
+
+def _repair_json(text: str) -> dict | None:
+    """Salvage a truncated JSON object (EFT-06). Walks from the first `{` tracking
+    string state and the open `{`/`[` stack, then closes a dangling string, drops a
+    trailing comma, and closes the open structures in correct LIFO order. Returns
+    the parsed dict, or None if it still won't parse. Never raises."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    frag = text[start:]
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for ch in frag:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch == "}" and stack and stack[-1] == "{":
+            stack.pop()
+        elif ch == "]" and stack and stack[-1] == "[":
+            stack.pop()
+    if in_str:
+        frag += '"'                       # close the truncated string value
+    frag = re.sub(r",(\s*)$", r"\1", frag)  # drop a trailing comma
+    for opener in reversed(stack):          # close open structures, innermost first
+        frag += "}" if opener == "{" else "]"
+    try:
+        result = json.loads(frag)
+        return result if isinstance(result, dict) else None
+    except json.JSONDecodeError:
+        return None

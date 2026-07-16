@@ -147,3 +147,42 @@ class TestSanitizeText:
     def test_empty_string(self):
         """Empty string is handled."""
         assert sanitize_text("") == ""
+
+
+# ---------------------------------------------------------------------------
+# EFT-06: JSON repair / salvage of truncated objects
+# ---------------------------------------------------------------------------
+from app.llm._json import _repair_json  # noqa: E402
+
+
+class TestRepairJson:
+    def test_truncated_nested_object(self):
+        """Truncated mid-string in a nested array repairs to valid, parseable JSON."""
+        out = _repair_json('{"concepts":[{"name":"X","type":"C')
+        assert out == {"concepts": [{"name": "X", "type": "C"}]}
+
+    def test_truncated_after_comma(self):
+        out = _repair_json('{"a": 1, "b": 2,')
+        assert out == {"a": 1, "b": 2}
+
+    def test_unterminated_string_value(self):
+        out = _repair_json('{"summary": "an incomplete sen')
+        assert out == {"summary": "an incomplete sen"}
+
+    def test_garbage_returns_none(self):
+        assert _repair_json("not json at all") is None
+        assert _repair_json("") is None
+        assert _repair_json("[1,2,3") is None  # top-level array, not an object
+
+    def test_already_valid_passthrough(self):
+        assert _repair_json('{"a": 1}') == {"a": 1}
+
+    def test_extract_json_object_uses_repair_and_flags(self):
+        """extract_json_object salvages a truncated object and marks it repaired."""
+        out = extract_json_object('{"concepts":[{"name":"X","type":"C')
+        assert out.get("repaired") is True
+        assert out["concepts"] == [{"name": "X", "type": "C"}]
+
+    def test_extract_json_object_still_raises_on_garbage(self):
+        with pytest.raises(json.JSONDecodeError):
+            extract_json_object("this has no json object")

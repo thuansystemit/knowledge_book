@@ -8,9 +8,11 @@ from typing import Iterator, Protocol
 class LlmProvider(Protocol):
     name: str
 
-    def complete_json(self, system_prompt: str, user_text: str, max_tokens: int = 8000) -> str:
+    def complete_json(self, system_prompt: str, user_text: str, max_tokens: int = 8000,
+                      temperature: float | None = None) -> str:
         """Return the model's reply as a JSON string (object extracted from the
-        reply text). Raises json.JSONDecodeError if no JSON object is found."""
+        reply text). `temperature` is an optional override (best-effort per
+        provider). Raises json.JSONDecodeError if no JSON object is found."""
         ...
 
     def stream_chat(self, system_prompt: str, messages: list[dict], max_tokens: int = 2048) -> Iterator[str]:
