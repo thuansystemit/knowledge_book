@@ -45,6 +45,18 @@ jobs:
       - name: Retrieval eval
         run: python eval/retrieval_eval.py
 
+      # JSON-extraction / sanitization unit tests (EFT-01/03/06).
+      - name: Unit tests
+        run: |
+          pip install pytest
+          python -m pytest tests/test_json_extract.py -q
+
+      # Extraction eval smoke (EFT-09): runs the full pipeline on a committed PDF
+      # with a deterministic stub provider (no live model / DB / Redis needed) and
+      # fails if quality thresholds regress (brief present, chunk success, concepts).
+      - name: Extraction eval smoke
+        run: python scripts/eval_extraction.py run --tag ci --stub --assert tests/eval/sample_backend.pdf
+
   frontend:
     name: frontend (typecheck · build)
     runs-on: ubuntu-latest

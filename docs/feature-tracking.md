@@ -6,7 +6,7 @@
 | **Product** | KnowledgeBook (Document Knowledge Graph) |
 | **Version** | 1.0 |
 | **Date** | 2026-07-08 |
-| **Status** | ACTIVE — 68/89 Done · 5 In Progress · 16 Not Started (see Current status below) |
+| **Status** | ACTIVE — 69/89 Done · 4 In Progress · 16 Not Started (see Current status below) |
 | **Owner** | Engineering Lead |
 | **Parents** | `PRD-knowledge-graph-mvp.md` v1.0, `ARCHITECTURE-mvp.md` v1.0, `PLAN-phase1-implementation.md` v1.0, `monetization-pricing.md` v1.0, `gtm-one-pager.md` v1.0 |
 
@@ -355,7 +355,7 @@ Hardens the extraction pipeline's structured-output reliability: capability-awar
 | EFT-06 | JSON repair / salvage pass: brace-balancing + trailing-comma cleanup + truncation recovery in `_json.py` as a fallback after parse failure | Extraction | Must | Phase 2 | E1 | Done | Unit test: truncated JSON `'{"concepts":[{"name":"X","type":"C'` repaired and parseable; returns `None` on garbage input; repaired results flagged with audit event `CHUNK_REPAIRED` | EFT-01 |
 | EFT-07 | Escalating retry policy: increase max_tokens (1x/1.5x/2x) and lower temperature (default/0.3/0.1) on each retry attempt; replaces hardcoded retry loops in `_call_chunk` and `_make_brief` | Extraction | Must | Phase 2 | E1 | Done | Attempt 2 uses 1.5x tokens; attempt 3 uses 2x; audit log shows escalation parameters; cost cap (`MAX_DOC_COST_USD`) still enforced across escalated retries | EFT-04 |
 | EFT-08 | Brief-only regeneration: `regenerate_brief()` function + `POST /api/admin/backfill-briefs` endpoint for repairing docs with `brief: null` | Extraction | Should | Phase 2 | E1 | Done | Endpoint regenerates Brief for specified docs (or all with `brief: null`); existing graph data untouched; cost recorded in ledger; admin-only access | EFT-07 |
-| EFT-09 | Eval harness: `scripts/eval_extraction.py` + `tests/eval/` eval set + CI smoke test; measures json_valid_rate, chunk_success_rate, brief_present_rate, concepts/doc, cost, latency | QA | Must | Phase 2 | E1 | In Progress | Script runs on 1+ test PDF and outputs JSON metrics; `--compare` flag prints side-by-side table of two runs; CI step passes on a test PDF (json_valid >= 0.90, brief_present == 1.0, concepts >= 5) | EFT-01 |
+| EFT-09 | Eval harness: `scripts/eval_extraction.py` + `tests/eval/` eval set + CI smoke test; measures json_valid_rate, chunk_success_rate, brief_present_rate, concepts/doc, cost, latency | QA | Must | Phase 2 | E1 | Done | Script runs on 1+ test PDF and outputs JSON metrics; `--compare` flag prints side-by-side table of two runs; CI step passes on a test PDF (json_valid >= 0.90, brief_present == 1.0, concepts >= 5) | EFT-01 |
 
 ### Phase 3 — Model Optimization + Fine-Tuning Prep (deferred)
 

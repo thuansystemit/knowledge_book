@@ -32,15 +32,43 @@ _RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                             "tests", "eval", "results")
 
 
-def _eval_one(path: str, cfg) -> dict:
+class _StubProvider:
+    """Deterministic offline provider (CI / `--stub`): returns valid extraction
+    JSON so the pipeline + harness run end-to-end without a live model. Dedup by
+    canonical key means the six concepts survive across chunks (>=5)."""
+    name = "stub"
+    model = "stub"
+    last_usage = None
+
+    def complete_json(self, system_prompt: str, user_text: str,
+                      max_tokens: int = 8000, temperature=None) -> str:
+        return json.dumps({
+            "concepts": [
+                {"name": "REST API", "type": "Concept", "definition": "An HTTP interface.", "confidence": 0.9},
+                {"name": "Caching", "type": "Concept", "definition": "Reusing computed results.", "confidence": 0.9},
+                {"name": "Idempotency", "type": "Principle", "definition": "Safe to repeat.", "confidence": 0.85},
+                {"name": "Load balancing", "type": "Concept", "definition": "Spreading traffic.", "confidence": 0.85},
+                {"name": "Sharding", "type": "Concept", "definition": "Partitioning data.", "confidence": 0.85},
+                {"name": "Consistency", "type": "Principle", "definition": "Replica agreement.", "confidence": 0.8},
+            ],
+            "relations": [
+                {"source": "Caching", "target": "REST API", "type": "relates_to",
+                 "evidence": "APIs cache responses.", "confidence": 0.7},
+                {"source": "Sharding", "target": "Consistency", "type": "leads_to",
+                 "evidence": "Sharding complicates consistency.", "confidence": 0.7},
+            ],
+        })
+
+
+def _eval_one(path: str, cfg, stub: bool = False) -> dict:
     with open(path, "rb") as f:
         data = f.read()
     title = os.path.basename(path)
-    provider = get_provider()
+    make = (lambda: _StubProvider()) if stub else (lambda: get_provider())
+    provider = make()
     t0 = time.monotonic()
     try:
-        graph = run_pipeline(data, title, provider, cfg,
-                             make_provider=lambda: get_provider())
+        graph = run_pipeline(data, title, provider, cfg, make_provider=make)
     except Exception as e:
         return {"doc": title, "error": str(e), "ok": False}
     stats = graph.get("stats", {})
@@ -81,7 +109,7 @@ def cmd_run(args) -> int:
     if not paths:
         print("no PDFs matched", file=sys.stderr)
         return 2
-    docs = [_eval_one(p, cfg) for p in paths]
+    docs = [_eval_one(p, cfg, stub=args.stub) for p in paths]
     summary = _aggregate(docs)
     out = {"tag": args.tag, "ts": datetime.now(timezone.utc).isoformat(),
            "summary": summary, "docs": docs}
@@ -131,6 +159,8 @@ def main() -> int:
     r.add_argument("--tag", required=True)
     r.add_argument("--assert", dest="assert_thresholds", action="store_true",
                    help="exit non-zero if CI thresholds fail")
+    r.add_argument("--stub", action="store_true",
+                   help="use a deterministic offline provider (CI / no live model)")
     r.add_argument("pdfs", nargs="+")
     c = sub.add_parser("compare")
     c.add_argument("tag1")
