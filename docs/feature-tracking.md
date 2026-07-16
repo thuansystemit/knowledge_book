@@ -6,7 +6,7 @@
 | **Product** | KnowledgeBook (Document Knowledge Graph) |
 | **Version** | 1.0 |
 | **Date** | 2026-07-08 |
-| **Status** | ACTIVE — 69/89 Done · 4 In Progress · 16 Not Started (see Current status below) |
+| **Status** | ACTIVE — 71/89 Done · 4 In Progress · 14 Not Started (see Current status below) |
 | **Owner** | Engineering Lead |
 | **Parents** | `PRD-knowledge-graph-mvp.md` v1.0, `ARCHITECTURE-mvp.md` v1.0, `PLAN-phase1-implementation.md` v1.0, `monetization-pricing.md` v1.0, `gtm-one-pager.md` v1.0 |
 
@@ -361,8 +361,8 @@ Hardens the extraction pipeline's structured-output reliability: capability-awar
 
 | ID | Feature / Task | Category | Priority | Phase / Sprint | Owner | Status | Acceptance Criteria | Dependencies |
 |---|---|---|---|---|---|---|---|---|
-| EFT-10 | Model selection docs: recommended instruct (non-reasoning) models per provider in `.env.example` + README; warn against reasoning variants for structured extraction | Docs | Should | Phase 3 | E1 | Not Started | `.env.example` lists at least one recommended model per provider (NVIDIA, Ollama, OpenAI, Claude); reasoning-model warning documented | EFT-09 |
-| EFT-11 | Extraction logging: persist (chunk_text, extraction_json, model_id, prompt_hash) for future SFT data collection; toggle via `LOG_EXTRACTIONS` env var | Extraction | Could | Phase 3 | E1 | Not Started | Logs written to `data/extraction_log/` on successful chunk extraction when `LOG_EXTRACTIONS=true`; no logging when false (default); no performance impact on critical path | EFT-09 |
+| EFT-10 | Model selection docs: recommended instruct (non-reasoning) models per provider in `.env.example` + README; warn against reasoning variants for structured extraction | Docs | Should | Phase 3 | E1 | Done | `.env.example` lists at least one recommended model per provider (NVIDIA, Ollama, OpenAI, Claude); reasoning-model warning documented | EFT-09 |
+| EFT-11 | Extraction logging: persist (chunk_text, extraction_json, model_id, prompt_hash) for future SFT data collection; toggle via `LOG_EXTRACTIONS` env var | Extraction | Could | Phase 3 | E1 | Done | Logs written to `data/extraction_log/` on successful chunk extraction when `LOG_EXTRACTIONS=true`; no logging when false (default); no performance impact on critical path | EFT-09 |
 | EFT-12 | LoRA fine-tuning: train a small extraction model on logged (chunk, extraction) pairs; A/B test via eval harness | Extraction | Phase 2 | Phase 3 | E2 | Not Started | Requires 500+ validated pairs; eval harness (EFT-09) shows fine-tuned model matches or exceeds prompt-based extraction on all metrics; concept precision >= 80% on eval set | EFT-09, EFT-11 |
 
 ---

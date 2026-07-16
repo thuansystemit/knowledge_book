@@ -182,6 +182,11 @@ class Settings:
     # OpenAI-compatible endpoint JSON mode: "auto" (detect on first call),
     # "force" (always send response_format), "off" (prompt-only, current behavior).
     openai_json_mode: str = field(default_factory=lambda: os.environ.get("OPENAI_JSON_MODE", "auto").strip().lower())
+    # Extraction logging for SFT data collection (EFT-11). Off by default; when on,
+    # each successful chunk extraction is written to EXTRACTION_LOG_DIR as one
+    # deduped JSON record ({chunk_text, extraction_json, model_id, prompt_hash}).
+    log_extractions: bool = field(default_factory=lambda: os.environ.get("LOG_EXTRACTIONS", "false").strip().lower() in ("1", "true", "yes"))
+    extraction_log_dir: str = field(default_factory=lambda: os.environ.get("EXTRACTION_LOG_DIR", "data/extraction_log").strip())
 
 
 def get_settings() -> Settings:

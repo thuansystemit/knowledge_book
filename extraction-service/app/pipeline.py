@@ -50,6 +50,31 @@ class RetryPolicy:
                 "temperature": self.temperatures[i]}
 
 
+def _log_extraction(cfg: Settings, model_id: str | None, prompt: str,
+                    chunk_text: str, extraction: dict) -> None:
+    """EFT-11: persist a successful (chunk -> extraction) pair for future SFT data
+    collection. No-op unless `cfg.log_extractions`; deduped by content hash;
+    never raises (must not affect the extraction critical path)."""
+    if not cfg.log_extractions:
+        return
+    try:
+        import hashlib
+        os.makedirs(cfg.extraction_log_dir, exist_ok=True)
+        prompt_hash = hashlib.sha256((prompt or "").encode("utf-8")).hexdigest()[:16]
+        key = hashlib.sha256(
+            ((model_id or "") + prompt_hash + (chunk_text or "")).encode("utf-8")
+        ).hexdigest()[:24]
+        path = os.path.join(cfg.extraction_log_dir, f"{key}.json")
+        if os.path.exists(path):
+            return  # already logged this exact (model, prompt, chunk)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"chunk_text": chunk_text, "extraction_json": extraction,
+                       "model_id": model_id, "prompt_hash": prompt_hash,
+                       "ts": time.time()}, f, ensure_ascii=False)
+    except Exception:
+        pass  # logging is best-effort — never break extraction
+
+
 def run(
     data: bytes,
     doc_title: str,
@@ -290,6 +315,8 @@ def _call_chunk(provider: LlmProvider, kg_prompt: str, doc_title: str,
             if attempt > 0:
                 audit("CHUNK_RECOVERED", index=chunk["index"], attempt=attempt + 1,
                       max_tokens=p["max_tokens"])
+            _log_extraction(cfg, getattr(provider, "model", None), kg_prompt,
+                            chunk.get("content", ""), parsed)  # EFT-11 (no-op if off)
             return {"parsed": parsed, "usage": getattr(provider, "last_usage", None),
                     "cache_key": ck, "raw": raw, "from_cache": False}
         except Exception as e:

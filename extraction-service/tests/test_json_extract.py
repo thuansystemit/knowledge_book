@@ -186,3 +186,40 @@ class TestRepairJson:
     def test_extract_json_object_still_raises_on_garbage(self):
         with pytest.raises(json.JSONDecodeError):
             extract_json_object("this has no json object")
+
+
+# ---------------------------------------------------------------------------
+# EFT-11: extraction logging (SFT data collection) — on/off + dedup
+# ---------------------------------------------------------------------------
+import glob  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+
+class TestLogExtraction:
+    def test_off_is_noop(self, tmp_path):
+        from app.pipeline import _log_extraction
+        d = str(tmp_path / "log")
+        cfg = SimpleNamespace(log_extractions=False, extraction_log_dir=d)
+        _log_extraction(cfg, "m", "prompt", "chunk", {"concepts": []})
+        assert not glob.glob(d + "/*.json")
+
+    def test_on_writes_deduped_record(self, tmp_path):
+        from app.pipeline import _log_extraction
+        d = str(tmp_path / "log")
+        cfg = SimpleNamespace(log_extractions=True, extraction_log_dir=d)
+        _log_extraction(cfg, "m1", "the-prompt", "chunk text", {"concepts": [{"name": "X"}]})
+        files = glob.glob(d + "/*.json")
+        assert len(files) == 1
+        rec = json.load(open(files[0]))
+        assert rec["chunk_text"] == "chunk text"
+        assert rec["model_id"] == "m1"
+        assert rec["extraction_json"] == {"concepts": [{"name": "X"}]}
+        assert rec["prompt_hash"]
+        # idempotent: same (model, prompt, chunk) does not write a second file
+        _log_extraction(cfg, "m1", "the-prompt", "chunk text", {"concepts": [{"name": "X"}]})
+        assert len(glob.glob(d + "/*.json")) == 1
+
+    def test_never_raises_on_bad_dir(self):
+        from app.pipeline import _log_extraction
+        cfg = SimpleNamespace(log_extractions=True, extraction_log_dir="/proc/nonwritable/x")
+        _log_extraction(cfg, "m", "p", "c", {"concepts": []})  # must not raise

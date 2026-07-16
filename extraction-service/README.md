@@ -52,6 +52,22 @@ Edit `.env` — no rebuild needed:
 > Tip: small local models (≤3b params) extract more reliably with smaller chunks —
 > set `CHUNK_TOKENS=600` in `.env`.
 
+### Model selection for extraction (EFT-10)
+Extraction needs **strict JSON, not reasoning**. Use a fast **instruct** model and
+**avoid "reasoning"/"thinking" variants** (e.g. `*-thinking`, `qwen3.5-*-a10b`,
+`deepseek-r1`): they spend the token budget on hidden chain-of-thought, which
+truncates the JSON and causes `"no JSON object found"` failures. Recommended:
+
+| Provider | Recommended (instruct) |
+|---|---|
+| NVIDIA (OpenAI-compatible) | `qwen/qwen2.5-72b-instruct`, `meta/llama-3.3-70b-instruct` |
+| Ollama (local) | `qwen2.5:14b-instruct` (or `qwen2.5:3b` for speed) |
+| OpenAI | `gpt-4o`, `gpt-4o-mini` |
+| Claude | `claude-opus-4-8` (adaptive thinking is fine here) |
+
+For OpenAI-compatible endpoints keep `OPENAI_JSON_MODE=auto` so `response_format`
+enforces valid JSON server-side. See `.env.example` for the full list.
+
 ## Layout
 ```
 app/
