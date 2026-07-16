@@ -6,7 +6,7 @@
 | **Product** | KnowledgeBook (Document Knowledge Graph) |
 | **Version** | 1.0 |
 | **Date** | 2026-07-08 |
-| **Status** | ACTIVE — 60/77 Done · 4 In Progress · 13 Not Started (see Current status below) |
+| **Status** | ACTIVE — 60/89 Done · 4 In Progress · 25 Not Started (see Current status below) |
 | **Owner** | Engineering Lead |
 | **Parents** | `PRD-knowledge-graph-mvp.md` v1.0, `ARCHITECTURE-mvp.md` v1.0, `PLAN-phase1-implementation.md` v1.0, `monetization-pricing.md` v1.0, `gtm-one-pager.md` v1.0 |
 
@@ -333,4 +333,38 @@ Every regeneration creates an immutable new version instead of overwriting the c
 
 ---
 
-*End of Feature Tracking v1.0 — update Status and Owner cells as work progresses.*
+## Part 15 — Extraction Fine-Tuning (Feature: `extraction-fine-tuning`)
+
+New initiative. Spec: `docs/FEATURE-extraction-fine-tuning.md` + `docs/FEATURE-extraction-fine-tuning.ctx.md`.
+Hardens the extraction pipeline's structured-output reliability: capability-aware JSON mode, response preprocessing, JSON repair, escalating retries, prompt hardening, text sanitization, eval harness, backfill, and optional LoRA fine-tuning prep. Motivated by production failures: JSON truncation from reasoning models, JSON mode disabled for NVIDIA, control chars from OCR.
+
+### Phase 1 — Quick Wins
+
+| ID | Feature / Task | Category | Priority | Phase / Sprint | Owner | Status | Acceptance Criteria | Dependencies |
+|---|---|---|---|---|---|---|---|---|
+| EFT-01 | Response preprocessing: strip `<think>` reasoning blocks and markdown fences in `extract_json_object` (`app/llm/_json.py`) | Extraction | Must | Phase 1 | E1 | Not Started | Unit test: `extract_json_object('<think>blah</think>{"a":1}')` returns `{"a":1}`; existing tests still pass; markdown-fenced JSON also parsed correctly | None |
+| EFT-02 | Prompt hardening: add anti-reasoning preamble, strict schema enforcement, and few-shot exemplar to `kg_extract.txt` and `brief.txt` | Extraction | Must | Phase 1 | E1 | Not Started | Prompt diff reviewed; chunk cache keys change (prompt text changed); extraction still produces valid JSON on a test PDF; no bare-string concepts in output | None |
+| EFT-03 | Text sanitization: strip C0 control chars (except tab/newline/CR/FF) at chunk creation (`chunker.py`) and graph build (`graph_builder.py`); SQL backfill for existing data | Extraction | Must | Phase 1 | E1 | Not Started | Unit test: `_sanitize("foo\x00bar")` returns `"foobar"`; `\t` and `\n` preserved; backfill SQL runs without error on existing `jobs.graph` data | None |
+| EFT-04 | Named token-budget settings: `EXTRACT_MAX_TOKENS` and `BRIEF_MAX_TOKENS` in `config.py`; replace hardcoded values in `pipeline.py` | Extraction | Must | Phase 1 | E1 | Not Started | Config values read from env vars; hardcoded 8000/6000 replaced; default behavior unchanged when env vars unset | None |
+
+### Phase 2 — JSON Mode + Reliability Layer
+
+| ID | Feature / Task | Category | Priority | Phase / Sprint | Owner | Status | Acceptance Criteria | Dependencies |
+|---|---|---|---|---|---|---|---|---|
+| EFT-05 | Capability-aware JSON mode: `OPENAI_JSON_MODE` setting (auto/force/off) in `config.py` + `openai_provider.py` + `factory.py`; auto-detection with graceful 400/422 fallback | Extraction | Must | Phase 2 | E1 | Not Started | `auto` probes on first call and caches result; `force` always sends `response_format`; `off` matches current behavior; 400/422 fallback tested; audit event logged on probe result | EFT-04 |
+| EFT-06 | JSON repair / salvage pass: brace-balancing + trailing-comma cleanup + truncation recovery in `_json.py` as a fallback after parse failure | Extraction | Must | Phase 2 | E1 | Not Started | Unit test: truncated JSON `'{"concepts":[{"name":"X","type":"C'` repaired and parseable; returns `None` on garbage input; repaired results flagged with audit event `CHUNK_REPAIRED` | EFT-01 |
+| EFT-07 | Escalating retry policy: increase max_tokens (1x/1.5x/2x) and lower temperature (default/0.3/0.1) on each retry attempt; replaces hardcoded retry loops in `_call_chunk` and `_make_brief` | Extraction | Must | Phase 2 | E1 | Not Started | Attempt 2 uses 1.5x tokens; attempt 3 uses 2x; audit log shows escalation parameters; cost cap (`MAX_DOC_COST_USD`) still enforced across escalated retries | EFT-04 |
+| EFT-08 | Brief-only regeneration: `regenerate_brief()` function + `POST /api/admin/backfill-briefs` endpoint for repairing docs with `brief: null` | Extraction | Should | Phase 2 | E1 | Not Started | Endpoint regenerates Brief for specified docs (or all with `brief: null`); existing graph data untouched; cost recorded in ledger; admin-only access | EFT-07 |
+| EFT-09 | Eval harness: `scripts/eval_extraction.py` + `tests/eval/` eval set + CI smoke test; measures json_valid_rate, chunk_success_rate, brief_present_rate, concepts/doc, cost, latency | QA | Must | Phase 2 | E1 | Not Started | Script runs on 1+ test PDF and outputs JSON metrics; `--compare` flag prints side-by-side table of two runs; CI step passes on a test PDF (json_valid >= 0.90, brief_present == 1.0, concepts >= 5) | EFT-01 |
+
+### Phase 3 — Model Optimization + Fine-Tuning Prep (deferred)
+
+| ID | Feature / Task | Category | Priority | Phase / Sprint | Owner | Status | Acceptance Criteria | Dependencies |
+|---|---|---|---|---|---|---|---|---|
+| EFT-10 | Model selection docs: recommended instruct (non-reasoning) models per provider in `.env.example` + README; warn against reasoning variants for structured extraction | Docs | Should | Phase 3 | E1 | Not Started | `.env.example` lists at least one recommended model per provider (NVIDIA, Ollama, OpenAI, Claude); reasoning-model warning documented | EFT-09 |
+| EFT-11 | Extraction logging: persist (chunk_text, extraction_json, model_id, prompt_hash) for future SFT data collection; toggle via `LOG_EXTRACTIONS` env var | Extraction | Could | Phase 3 | E1 | Not Started | Logs written to `data/extraction_log/` on successful chunk extraction when `LOG_EXTRACTIONS=true`; no logging when false (default); no performance impact on critical path | EFT-09 |
+| EFT-12 | LoRA fine-tuning: train a small extraction model on logged (chunk, extraction) pairs; A/B test via eval harness | Extraction | Phase 2 | Phase 3 | E2 | Not Started | Requires 500+ validated pairs; eval harness (EFT-09) shows fine-tuned model matches or exceeds prompt-based extraction on all metrics; concept precision >= 80% on eval set | EFT-09, EFT-11 |
+
+---
+
+*End of Feature Tracking v1.0 -- update Status and Owner cells as work progresses.*
