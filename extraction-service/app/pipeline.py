@@ -394,12 +394,19 @@ def _make_brief(graph: dict, doc_title: str, provider: LlmProvider,
         f"Document: {doc_title}\n\nTop concepts:\n" + "\n".join(concept_lines)
         + "\n\nKey relations:\n" + "\n".join(rel_lines)
     )
-    try:
-        raw = provider.complete_json(_load_prompt("brief.txt"), payload, max_tokens=2048)
-        if ledger is not None:
-            ledger.add(getattr(provider, "model", None),
-                       getattr(provider, "last_usage", None), stage="brief")
-        return json.loads(raw)
-    except Exception as e:
-        audit("BRIEF_FAILED", error=str(e))
-        return None
+    # A reasoning model (e.g. qwen) can spend its token budget "thinking" and get
+    # truncated before a complete JSON object exists — extract_json_object then
+    # raises "no JSON object found" and the doc ends up with no Brief. Give it
+    # generous headroom and one retry so a transient bad response doesn't drop it.
+    last_err: Exception | None = None
+    for _attempt in range(2):
+        try:
+            raw = provider.complete_json(_load_prompt("brief.txt"), payload, max_tokens=6000)
+            if ledger is not None:
+                ledger.add(getattr(provider, "model", None),
+                           getattr(provider, "last_usage", None), stage="brief")
+            return json.loads(raw)
+        except Exception as e:  # noqa: BLE001 — LLM/parse failure: retry, then give up
+            last_err = e
+    audit("BRIEF_FAILED", error=str(last_err))
+    return None
