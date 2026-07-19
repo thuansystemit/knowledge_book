@@ -52,6 +52,24 @@ Edit `.env` — no rebuild needed:
 > Tip: small local models (≤3b params) extract more reliably with smaller chunks —
 > set `CHUNK_TOKENS=600` in `.env`.
 
+### Applying `.env` / config changes to running containers
+The CLI `extractor` reads `.env` fresh on each run, but the long-running `api` and
+`worker` containers only load config at **startup** — you must recreate them after
+editing `.env` (or the override file) for the new config to take effect:
+
+```bash
+cd extraction-service        # run FROM this dir so docker-compose.override.yml auto-merges
+docker compose up -d --force-recreate worker    # or: api worker
+```
+
+> ⚠️ Do **not** pass `-f docker-compose.yml` explicitly — that disables Compose's
+> automatic loading of `docker-compose.override.yml`, so the throttle overrides
+> (`CHUNK_TOKENS`, `CHUNK_THROTTLE_MS`, `LLM_MAX_RETRIES`, `--concurrency=1`) are
+> dropped and the container silently falls back to the `.env` defaults. If you must
+> use `-f`, list both files: `-f docker-compose.yml -f docker-compose.override.yml`.
+>
+> Verify the config landed: `docker exec extraction-service-worker-1 env | grep -E 'CHUNK_TOKENS|CHUNK_THROTTLE_MS|LLM_MAX_RETRIES'`
+
 ### Model selection for extraction (EFT-10)
 Extraction needs **strict JSON, not reasoning**. Use a fast **instruct** model and
 **avoid "reasoning"/"thinking" variants** (e.g. `*-thinking`, `qwen3.5-*-a10b`,

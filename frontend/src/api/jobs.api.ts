@@ -25,6 +25,7 @@ export interface Graph {
   ocr_quality?: {      // OCR confidence gate (ING-06)
     ocr_used: boolean; mean_confidence?: number | null; low_confidence?: boolean;
     low_pages?: number[]; threshold?: number;
+    ocr_page_ratio?: number;   // OCRQ-04: fraction of pages OCR meaningfully covered
   };
   chapter_guide?: ChapterGuideEntry[];   // OUT-03
   chapter_guide_locked?: boolean;        // withheld on the Free tier (PAY-01)

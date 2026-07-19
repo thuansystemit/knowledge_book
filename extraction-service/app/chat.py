@@ -301,7 +301,9 @@ def _is_followup(question: str, content_tokens: set[str]) -> bool:
 def compose_answer(graph: dict, question: str,
                    prev_question: str | None = None,
                    query_vector: list[float] | None = None,
-                   sim_threshold: float = 0.55) -> tuple[str, list[dict], bool]:
+                   sim_threshold: float = 0.55,
+                   semantic_node_idx: list[int] | None = None,
+                   semantic_chunk_idx: list[int] | None = None) -> tuple[str, list[dict], bool]:
     """Deterministically compose an answer from the extracted graph — no LLM.
 
     Stitches the retrieved concept definitions, relationships, and (for
@@ -332,17 +334,25 @@ def compose_answer(graph: dict, question: str,
     concept_hits = _match_concepts(graph, q_words)
     chunk_hits = _rank_chunks(graph, q_words, k=2, min_overlap=2)
 
-    # RC-14: augment lexical hits with semantic (embedding) matches when a query
-    # vector is available — catches open-domain paraphrases that share no words.
-    if query_vector:
+    # RC-14 / OUT-04: augment lexical hits with semantic (embedding) matches —
+    # catches open-domain paraphrases that share no words. Candidate indices come
+    # from pgvector (`semantic_*_idx`, resolved by the caller with a DB session)
+    # when available, else from the in-JSON cosine scan (legacy jobs / no DB).
+    # Either way the ANSWER is still composed from the graph nodes/chunks below —
+    # the vector store only widens the candidate set, it never produces text.
+    if query_vector is not None or semantic_node_idx is not None:
         nodes = graph.get("nodes") or []
+        node_idx = (semantic_node_idx if semantic_node_idx is not None
+                    else _semantic_indices(query_vector, graph.get("node_vectors"), 5, sim_threshold))
         have = {n["id"] for n in concept_hits}
-        for i in _semantic_indices(query_vector, graph.get("node_vectors"), 5, sim_threshold):
+        for i in node_idx:
             if i < len(nodes) and nodes[i].get("id") not in have:
                 concept_hits.append(nodes[i]); have.add(nodes[i].get("id"))
         chunks = graph.get("chunks") or []
+        chunk_idx = (semantic_chunk_idx if semantic_chunk_idx is not None
+                     else _semantic_indices(query_vector, graph.get("chunk_vectors"), 2, sim_threshold))
         have_c = {c.get("index") for c in chunk_hits}
-        extra = [chunks[i] for i in _semantic_indices(query_vector, graph.get("chunk_vectors"), 2, sim_threshold)
+        extra = [chunks[i] for i in chunk_idx
                  if i < len(chunks) and chunks[i].get("index") not in have_c]
         chunk_hits = (chunk_hits + extra)[:3]
 

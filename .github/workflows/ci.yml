@@ -45,11 +45,13 @@ jobs:
       - name: Retrieval eval
         run: python eval/retrieval_eval.py
 
-      # JSON-extraction / sanitization unit tests (EFT-01/03/06).
+      # JSON-extraction / sanitization unit tests (EFT-01/03/06), OCR quality
+      # gate (OCRQ-01/02/03), and pgvector read-path grounding (OUT-04).
+      # These are DB-free; the pgvector store integration test skips without a DB.
       - name: Unit tests
         run: |
           pip install pytest
-          python -m pytest tests/test_json_extract.py -q
+          python -m pytest tests/test_json_extract.py tests/test_ocr_quality.py tests/test_chat_semantic.py tests/test_embeddings_split.py -q
 
       # Extraction eval smoke (EFT-09): runs the full pipeline on a committed PDF
       # with a deterministic stub provider (no live model / DB / Redis needed) and

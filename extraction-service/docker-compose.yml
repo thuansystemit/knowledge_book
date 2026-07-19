@@ -8,7 +8,9 @@
 # One-shot CLI extraction (no auth, writes ./out): docker compose run --rm extractor
 services:
   db:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 = official Postgres 16 (Debian) + the `vector`
+    # extension preinstalled — needed for the OUT-04 pgvector retrieval index.
+    image: pgvector/pgvector:pg16
     environment:
       - POSTGRES_USER=kb
       - POSTGRES_PASSWORD=kb

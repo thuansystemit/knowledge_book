@@ -152,6 +152,51 @@ def run_interview_prep() -> None:
         )
 
 
+def run_pgvector() -> None:
+    """Enable pgvector + create the `chunk_embeddings` retrieval index table (OUT-04).
+
+    Finishes the deferred OUT-04 plan: concept/chunk embeddings move out of the
+    `jobs.graph` JSON into a dedicated table searched with pgvector's `<=>`
+    operator. Idempotent and safe on every boot. Requires the `pgvector/pgvector`
+    Postgres image (the plain `postgres:16-alpine` has no `vector` extension).
+    `embedding` is an unspecified-dimension `vector` so switching embedding models
+    (different dims) needs no migration; an ANN index is a documented follow-up.
+    The FK ON DELETE CASCADE means job deletion cleans up embeddings for free."""
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS chunk_embeddings ("
+            " job_id VARCHAR(32) NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,"
+            " org_id VARCHAR(32),"
+            " category_id VARCHAR(32),"
+            " kind VARCHAR(8) NOT NULL,"          # 'node' | 'chunk'
+            " idx INTEGER NOT NULL,"              # aligns with graph[nodes|chunks][idx]
+            " sub INTEGER NOT NULL DEFAULT 0,"    # OUT-04e sub-passage # within a chunk
+            " model VARCHAR(100),"
+            " embedding vector NOT NULL,"
+            " PRIMARY KEY (job_id, kind, idx, sub))"))
+        # OUT-04e: evolve a pre-existing table (PK was job_id,kind,idx) to include
+        # the sub-passage index. Idempotent — only swaps the PK if `sub` isn't in it.
+        conn.execute(text(
+            "ALTER TABLE chunk_embeddings ADD COLUMN IF NOT EXISTS sub INTEGER NOT NULL DEFAULT 0"))
+        conn.execute(text(
+            "DO $$ BEGIN"
+            "  IF NOT EXISTS ("
+            "    SELECT 1 FROM information_schema.key_column_usage"
+            "    WHERE constraint_name = 'chunk_embeddings_pkey' AND column_name = 'sub'"
+            "  ) THEN"
+            "    ALTER TABLE chunk_embeddings DROP CONSTRAINT IF EXISTS chunk_embeddings_pkey;"
+            "    ALTER TABLE chunk_embeddings ADD PRIMARY KEY (job_id, kind, idx, sub);"
+            "  END IF;"
+            "END $$;"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chunk_embeddings_job_kind "
+            "ON chunk_embeddings (job_id, kind)"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chunk_embeddings_org "
+            "ON chunk_embeddings (org_id)"))
+
+
 def run_interview_prep_versioning() -> None:
     """Add version history to interview_prep_plans (IP-06, idempotent).
 

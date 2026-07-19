@@ -111,27 +111,52 @@ def _from_pdf(data: bytes) -> tuple[str, dict]:
     quality: dict = {"ocr_used": False}
     if ocr_pages:
         recognised = _ocr_pdf_pages(data, ocr_pages)  # {page: (text, confidence)}
-        confs: list[float] = []
-        low_pages: list[int] = []
-        threshold = get_settings().ocr_min_confidence
-        for i, (txt, conf) in recognised.items():
+        # Adopt any OCR text that beats the (near-empty) text layer.
+        for i, (txt, _conf) in recognised.items():
             if len(txt.strip()) > len(parts[i].strip()):
                 parts[i] = txt
-            if conf is not None:
-                confs.append(conf)
-                if conf < threshold:
-                    low_pages.append(i)
-        mean_conf = round(sum(confs) / len(confs), 1) if confs else None
-        quality = {
-            "ocr_used": True,
-            "mean_confidence": mean_conf,
-            "low_confidence": bool(mean_conf is not None and mean_conf < threshold),
-            "low_pages": sorted(low_pages),
-            "threshold": threshold,
-        }
-        audit("OCR_QUALITY", **{k: quality[k] for k in ("mean_confidence", "low_confidence")})
+        settings = get_settings()
+        quality = _summarize_ocr_quality(
+            recognised, len(parts), settings.ocr_min_confidence, settings.ocr_doc_min_ratio)
+        audit("OCR_QUALITY", **{k: quality[k] for k in
+                                ("mean_confidence", "low_confidence", "ocr_page_ratio")})
 
     return PAGE_MARKER.join(parts), quality
+
+
+def _summarize_ocr_quality(recognised: dict[int, tuple[str, float | None]],
+                           total_pages: int, threshold: float,
+                           min_ratio: float) -> dict:
+    """Build the ING-06 `ocr_quality` dict from per-page OCR results.
+
+    OCRQ-01/02: pages OCR came back empty on (blank separators, image-only covers)
+    score ~0% and are excluded from the confidence accounting so they don't poison
+    the mean. OCRQ-03: the document-level `low_confidence` flag only trips when OCR
+    meaningfully covered the document (`ocr_page_ratio >= min_ratio`) — a mostly
+    born-digital PDF with a few text-less pages is not a low-quality scan."""
+    confs: list[float] = []
+    low_pages: list[int] = []
+    recognised_pages = 0  # pages OCR actually read text from (excludes blanks)
+    for i, (txt, conf) in recognised.items():
+        if not txt.strip():
+            continue
+        recognised_pages += 1
+        if conf is not None:
+            confs.append(conf)
+            if conf < threshold:
+                low_pages.append(i)
+    mean_conf = round(sum(confs) / len(confs), 1) if confs else None
+    ocr_page_ratio = round(recognised_pages / total_pages, 3) if total_pages else 0.0
+    mean_below = bool(mean_conf is not None and mean_conf < threshold)
+    low_confidence = bool(mean_below and ocr_page_ratio >= min_ratio)
+    return {
+        "ocr_used": True,
+        "mean_confidence": mean_conf,
+        "low_confidence": low_confidence,
+        "low_pages": sorted(low_pages),
+        "ocr_page_ratio": ocr_page_ratio,  # OCRQ-04
+        "threshold": threshold,
+    }
 
 
 def _ocr_pdf_pages(data: bytes, pages: list[int]) -> dict[int, tuple[str, float | None]]:

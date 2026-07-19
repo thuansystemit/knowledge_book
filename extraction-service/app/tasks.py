@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import traceback
 
-from app import job_events
+from app import embeddings, embeddings_store, job_events
 from app.celery_app import celery_app
 from app.config import get_settings
 from app.db import session_scope
@@ -15,6 +15,27 @@ from app.llm.factory import get_provider
 from app.models import DocumentFile, Job
 from app.observability import audit
 from app.pipeline import regenerate_brief, retry_failed, run as run_pipeline
+
+
+def _sync_embeddings(db, job: Job, graph: dict | None) -> None:
+    """Embed the job's concepts + chunk sub-passages and persist them to pgvector
+    (OUT-04/04e). Fail-safe: embeddings are optional, so any error is logged and
+    never fails the job save; retrieval simply degrades to lexical."""
+    if not graph:
+        return
+    cfg = get_settings()
+    if not embeddings.enabled(cfg):
+        return
+    try:
+        result = embeddings.embed_graph(graph.get("nodes") or [], graph.get("chunks") or [], cfg)
+        if result is None:
+            audit("PGVECTOR_SYNC_SKIPPED", job=job.id, reason="embedding unavailable")
+            return
+        node_vectors, chunk_rows = result
+        embeddings_store.sync_job(db, job.id, job.org_id, job.category_id,
+                                  cfg.embedding_model, node_vectors, chunk_rows)
+    except Exception as e:  # never break the pipeline on a retrieval-index write
+        audit("PGVECTOR_SYNC_FAILED", job=job.id, error=str(e))
 
 
 @celery_app.task(name="run_extraction")
@@ -66,6 +87,7 @@ def run_extraction(job_id: str) -> None:
                 _total = (graph or {}).get("stage_timings", {}).get("total_s") if graph else None
                 job.duration_ms = int(_total * 1000) if _total else None
                 job.ocr_confidence = (graph or {}).get("ocr_quality", {}).get("mean_confidence") if graph else None
+                _sync_embeddings(db, job, graph)   # OUT-04 pgvector index
         job_events.mark_done(job_id)
 
 
@@ -120,9 +142,40 @@ def retry_extraction(job_id: str) -> None:
                 if new_graph is not None:
                     job.graph = new_graph
                     job.cost_usd = (new_graph.get("cost") or {}).get("usd")
+                    _sync_embeddings(db, job, new_graph)   # OUT-04 pgvector index
                 job.events = job_events.all_events(job_id)
                 job.error = error
         job_events.mark_done(job_id)
+
+
+@celery_app.task(name="backfill_embeddings")
+def backfill_embeddings(job_ids: list[str]) -> None:
+    """OUT-04f: embed an already-extracted job's graph (nodes + chunks) and store
+    the vectors in pgvector — no re-extraction, no LLM. Brings documents processed
+    before the pgvector index existed into semantic retrieval. Idempotent (sync_job
+    replaces) and fail-safe per doc so one failure never stops the batch."""
+    cfg = get_settings()
+    if not embeddings.enabled(cfg):
+        audit("EMBED_BACKFILL_SKIPPED", reason="no embedding model configured")
+        return
+    for jid in job_ids:
+        try:
+            with session_scope() as db:
+                job = db.get(Job, jid)
+                if not job or not job.graph:
+                    continue
+                g = job.graph
+                result = embeddings.embed_graph(g.get("nodes") or [], g.get("chunks") or [], cfg)
+                if result is None:  # embedding host down / model error
+                    audit("EMBED_BACKFILL_FAILED", job=jid)
+                    continue
+                node_vectors, chunk_rows = result
+                embeddings_store.sync_job(db, jid, job.org_id, job.category_id,
+                                          cfg.embedding_model, node_vectors, chunk_rows)
+            audit("EMBED_BACKFILLED", job=jid, nodes=len(node_vectors),
+                  chunk_vectors=len(chunk_rows))
+        except Exception as e:  # noqa: BLE001 — one bad doc must not stop the batch
+            audit("EMBED_BACKFILL_ERROR", job=jid, error=str(e))
 
 
 @celery_app.task(name="backfill_briefs")

@@ -265,8 +265,14 @@ export function DocumentDetailPage() {
 
       {g && (
         <>
-          {/* OCR quality gate (ING-06): warn before any output is trusted */}
-          {g.ocr_quality?.low_confidence && (
+          {/* OCR quality gate (ING-06 / OCRQ-05).
+              Two distinct signals:
+              - low_confidence: the document is substantially scanned AND the mean
+                confidence is below threshold -> strong warning, content is suspect.
+              - otherwise, if OCR ran on a few pages of a mostly born-digital PDF
+                (low_pages present but not flagged low_confidence) -> soft,
+                page-scoped note; the bulk of the text came from a clean text layer. */}
+          {g.ocr_quality?.low_confidence ? (
             <div className="alert alert-warning d-flex align-items-start gap-2 mb-4" role="alert">
               <i className="bi bi-exclamation-triangle-fill" aria-hidden="true" style={{ marginTop: 2 }} />
               <div>
@@ -276,7 +282,17 @@ export function DocumentDetailPage() {
                 Concepts and answers may contain recognition errors — verify against the source PDF.
               </div>
             </div>
-          )}
+          ) : g.ocr_quality?.ocr_used && (g.ocr_quality.low_pages?.length ?? 0) > 0 ? (
+            <div className="alert alert-info d-flex align-items-start gap-2 mb-4" role="alert">
+              <i className="bi bi-info-circle-fill" aria-hidden="true" style={{ marginTop: 2 }} />
+              <div>
+                <strong>OCR used on {g.ocr_quality.low_pages!.length} page(s).</strong> Most of this
+                document was read directly from its digital text layer; a few low-text pages fell
+                back to OCR. Content is generally reliable — if a specific concept looks off, check
+                those page(s) against the source PDF.
+              </div>
+            </div>
+          ) : null}
 
           {/* ── Stat row ── */}
           <div className="row g-3 mb-4">

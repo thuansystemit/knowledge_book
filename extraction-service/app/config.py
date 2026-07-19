@@ -53,6 +53,12 @@ class Settings:
     # OCR quality gate (ING-06): mean Tesseract word confidence (0-100) below this
     # flags the document low_confidence so the UI warns the reader.
     ocr_min_confidence: float = field(default_factory=lambda: float(os.environ.get("OCR_MIN_CONFIDENCE", "70")))
+    # OCRQ-03 native-text gate: only raise the document-level low_confidence flag
+    # when OCR actually covered a meaningful fraction of the document. A mostly
+    # born-digital PDF with a few text-less pages (blank separators, sparse
+    # bibliography) must not be flagged as a low-quality scan. Fraction of pages
+    # that went through OCR must be >= this for the doc-level flag to trip.
+    ocr_doc_min_ratio: float = field(default_factory=lambda: float(os.environ.get("OCR_DOC_MIN_RATIO", "0.5")))
     # Layout parsing (HAR-01/02): column-aware extraction for 2-column PDFs and
     # figure/table caption extraction. Both fall back safely if disabled.
     layout_columns: bool = field(default_factory=lambda: os.environ.get("LAYOUT_COLUMNS", "true").lower() in ("1", "true", "yes"))
@@ -90,6 +96,16 @@ class Settings:
     embedding_model: str = field(default_factory=lambda: os.environ.get("EMBEDDING_MODEL", "").strip())
     embedding_provider: str = field(default_factory=lambda: os.environ.get("EMBEDDING_PROVIDER", "ollama").strip().lower())
     embedding_sim_threshold: float = field(default_factory=lambda: float(os.environ.get("EMBEDDING_SIM_THRESHOLD", "0.55")))
+    # NVIDIA e5/embedqa embedding models require an asymmetric input_type:
+    # documents/passages use this value, the query uses "query". Blank = symmetric
+    # model (Ollama / OpenAI-native) — nothing sent. e.g. EMBEDDING_INPUT_TYPE=passage
+    embedding_input_type: str = field(default_factory=lambda: os.environ.get("EMBEDDING_INPUT_TYPE", "").strip())
+    # Per-text char cap before embedding — token-limited models (NVIDIA e5 = 512
+    # tokens ≈ ~2000 chars) 400 on longer inputs. 0 = no cap.
+    embedding_max_chars: int = field(default_factory=lambda: int(os.environ.get("EMBEDDING_MAX_CHARS", "1800")))
+    # OUT-04e: chunks are split into sub-passages of ~this many chars before
+    # embedding, so a long chunk is fully covered (not just its leading window).
+    embedding_subchunk_chars: int = field(default_factory=lambda: int(os.environ.get("EMBEDDING_SUBCHUNK_CHARS", "1000")))
 
     # Outputs
     output_dir: str = field(default_factory=lambda: os.environ.get("OUTPUT_DIR", "/out"))

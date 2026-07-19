@@ -37,7 +37,7 @@ from app.deps import get_current_user, require_role
 from app.interview_prep_routes import router as interview_prep_router
 from app.migrations import (
     run_categories, run_interview_prep, run_interview_prep_versioning,
-    run_models, run_plans, run_tenancy,
+    run_models, run_pgvector, run_plans, run_tenancy,
 )
 from app.model_resolver import get_catalog, invalidate_catalog, resolve as resolve_model, system_default
 from app.models import ChatMessage, DocumentFile, Job, OrgModelPolicy, User, UserSettings
@@ -49,7 +49,7 @@ from app.plans import (
 )
 from app.ratelimit import upload_limit
 from app.security import hash_password, make_stream, safe_decode
-from app.tasks import backfill_briefs, retry_extraction, run_extraction
+from app.tasks import backfill_briefs, backfill_embeddings, retry_extraction, run_extraction
 
 app = FastAPI(title="KnowledgeBook Extraction API")
 
@@ -83,6 +83,7 @@ def _startup() -> None:
     run_categories()                # categories + grants + General backfill (EF-27)
     run_interview_prep()            # interview_prep_plans + questions tables (IP-01)
     run_interview_prep_versioning() # version + is_current columns + indexes (IP-06)
+    run_pgvector()                  # pgvector ext + chunk_embeddings table (OUT-04)
 
 
 def _bootstrap_admin(org_id: str) -> None:
@@ -477,6 +478,31 @@ def backfill_briefs_endpoint(body: BackfillBriefsIn,
     if not ids:
         return {"queued": 0, "job_ids": []}
     backfill_briefs.delay(ids)
+    return {"queued": len(ids), "job_ids": ids}
+
+
+class BackfillEmbeddingsIn(BaseModel):
+    doc_ids: list[str] | None = None
+    all_missing: bool = False
+
+
+@app.post("/api/admin/backfill-embeddings")
+def backfill_embeddings_endpoint(body: BackfillEmbeddingsIn,
+                                 admin: User = Depends(require_role("admin")),
+                                 db=Depends(get_db)):
+    """OUT-04f: queue pgvector embedding backfill for docs not yet in the index
+    (or a given list). Embeds each job's existing graph — no re-extraction — and
+    runs async in the worker. Requires an embedding model to be configured."""
+    if body.all_missing:
+        rows = db.execute(text(
+            "SELECT j.id FROM jobs j WHERE j.status='done' AND j.graph IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM chunk_embeddings e WHERE e.job_id = j.id)")).all()
+        ids = [r[0] for r in rows]
+    else:
+        ids = list(body.doc_ids or [])
+    if not ids:
+        return {"queued": 0, "job_ids": []}
+    backfill_embeddings.delay(ids)
     return {"queued": len(ids), "job_ids": ids}
 
 

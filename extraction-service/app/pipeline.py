@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from app import chapter_guide, chunk_cache, embeddings
+from app import chapter_guide, chunk_cache
 from app.config import Settings
 from app.costs import CostLedger
 from app.domain.graph_schema import NODE_TYPES  # noqa: F401  (kept for callers)
@@ -185,20 +185,10 @@ def run(
          "page_end": ch.page_end, "content": ch.content}
         for ch in chunks
     ]
-    # Semantic vectors for retrieval (RC-14) — optional + fail-safe: only when an
-    # embedding model is configured, and any failure leaves the graph lexical-only.
-    if embeddings.enabled(cfg):
-        try:
-            nv = embeddings.embed_texts(
-                [f"{n['name']}: {n.get('definition', '')}" for n in graph["nodes"]], cfg)
-            cv = embeddings.embed_texts([c["content"] for c in graph["chunks"]], cfg)
-            if nv and cv:
-                graph["node_vectors"] = [[round(x, 5) for x in v] for v in nv]
-                graph["chunk_vectors"] = [[round(x, 5) for x in v] for v in cv]
-                graph["embedding_model"] = cfg.embedding_model
-                audit("EMBEDDED", nodes=len(nv), chunks=len(cv))
-        except Exception as e:
-            audit("EMBED_SKIPPED", error=str(e))
+    # Semantic vectors for retrieval (RC-14 / OUT-04) are computed + persisted to
+    # the pgvector index by the worker after the graph is saved (tasks._sync_embeddings
+    # -> embeddings.embed_graph). Embedding lives there, not here, so the graph JSON
+    # stays lean and the store is the single source of truth for retrieval.
     # Keep the failed chunks' text so they can be retried + merged into THIS graph
     # later (retry_failed / POST /api/jobs/{id}/retry-failed) rather than re-running
     # the whole document.

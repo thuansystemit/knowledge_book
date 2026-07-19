@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.access import require_job_access
-from app import embeddings
+from app import embeddings, embeddings_store
 from app.chat import build_context, compose_answer
 from app.config import get_settings
 from app.db import get_db, session_scope
@@ -119,9 +119,18 @@ def stream_answer(job_id: str, msg_id: str, t: str = "", db=Depends(get_db)):
                        if m.role == "user" and m.id != user_msg.id), None)
         # RC-14: embed the question for semantic matching (None if disabled/failed).
         qvec = embeddings.embed_query(user_msg.content, cfg) if embeddings.enabled(cfg) else None
+        # OUT-04: resolve semantic candidates via the pgvector index when this job
+        # is indexed; legacy jobs (vectors only in graph JSON) fall back to the
+        # in-JSON cosine scan inside compose_answer. Grounding stays the graph.
+        sni = sci = None
+        if qvec is not None and embeddings_store.has_rows(db, job_id):
+            _thr = cfg.embedding_sim_threshold
+            sni = embeddings_store.search(db, job_id, "node", qvec, 5, _thr)
+            sci = embeddings_store.search(db, job_id, "chunk", qvec, 2, _thr)
         answer, citations, weak = compose_answer(
             job.graph, user_msg.content, prev_q,
-            query_vector=qvec, sim_threshold=cfg.embedding_sim_threshold)
+            query_vector=qvec, sim_threshold=cfg.embedding_sim_threshold,
+            semantic_node_idx=sni, semantic_chunk_idx=sci)
         qa_latency_ms = int((time.monotonic() - _qa_t0) * 1000)  # ACT-07
         # RC-22: on a weak/not-covered answer, prompt the user to upgrade — but
         # only when upgrading would actually unlock LLM chat (server in LLM mode
