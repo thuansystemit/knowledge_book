@@ -11,7 +11,7 @@ from app import embeddings, embeddings_store, job_events
 from app.celery_app import celery_app
 from app.config import get_settings
 from app.db import session_scope
-from app.llm.factory import get_provider
+from app.llm.factory import get_provider, model_available
 from app.models import DocumentFile, Job
 from app.observability import audit
 from app.pipeline import regenerate_brief, retry_failed, run as run_pipeline
@@ -127,8 +127,12 @@ def retry_extraction(job_id: str) -> None:
             if job is None:
                 return
             graph, title = job.graph, job.title
-            provider_name, model_id = job.llm_provider, job.extraction_model
-        provider = get_provider(provider_name or None, model_id or None)
+        # Retry with the CURRENT configured model, not the job's recorded one (it
+        # may be dead/removed); verify it's available before spending the budget.
+        provider = get_provider()
+        if not model_available(provider):
+            raise RuntimeError(f"current extraction model unavailable: "
+                               f"{getattr(provider, 'model', provider.name)}")
         new_graph = retry_failed(graph, title, provider, cfg, on_event=on_event)
     except Exception as e:
         status, error = "error", str(e)
@@ -181,8 +185,19 @@ def backfill_embeddings(job_ids: list[str]) -> None:
 @celery_app.task(name="backfill_briefs")
 def backfill_briefs(job_ids: list[str]) -> None:
     """EFT-08: regenerate the Brief for docs left with `brief: null`, without
-    re-extracting chunks. Reuses each job's original provider/model."""
+    re-extracting chunks.
+
+    Regeneration uses the CURRENT configured model, not each job's originally
+    recorded one — a stored model may have been removed from the endpoint (e.g.
+    a 404 on `gpt-5.6-luna`), and brief synthesis is model-agnostic. We verify the
+    current model is actually available once up front and abort clearly if not,
+    rather than burning the retry budget per doc."""
     cfg = get_settings()
+    provider = get_provider()  # current default provider/model (cfg-driven)
+    if not model_available(provider):
+        audit("BRIEF_BACKFILL_ABORTED", reason="current model unavailable",
+              model=getattr(provider, "model", provider.name))
+        return
     for jid in job_ids:
         try:
             with session_scope() as db:
@@ -193,8 +208,6 @@ def backfill_briefs(job_ids: list[str]) -> None:
                     continue  # already has a Brief — skip
                 graph = job.graph
                 title = job.title
-                provider_name, model_id = job.llm_provider, job.extraction_model
-            provider = get_provider(provider_name or None, model_id or None)
             brief = regenerate_brief(graph, title, provider, cfg)
             if brief is None:
                 continue

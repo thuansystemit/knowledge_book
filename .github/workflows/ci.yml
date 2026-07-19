@@ -51,7 +51,7 @@ jobs:
       - name: Unit tests
         run: |
           pip install pytest
-          python -m pytest tests/test_json_extract.py tests/test_ocr_quality.py tests/test_chat_semantic.py tests/test_embeddings_split.py -q
+          python -m pytest tests/test_json_extract.py tests/test_ocr_quality.py tests/test_chat_semantic.py tests/test_embeddings_split.py tests/test_model_available.py -q
 
       # Extraction eval smoke (EFT-09): runs the full pipeline on a committed PDF
       # with a deterministic stub provider (no live model / DB / Redis needed) and

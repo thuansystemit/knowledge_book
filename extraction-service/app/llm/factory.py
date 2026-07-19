@@ -35,6 +35,32 @@ def get_provider(name: str | None = None, model: str | None = None) -> LlmProvid
     raise ValueError(f"unknown LLM provider: {name}")
 
 
+def model_available(provider: LlmProvider) -> bool:
+    """Cheap reachability check: is this provider's model actually served right now?
+
+    Regeneration/retry must not blindly trust a model recorded on an old job (a
+    model can be removed from the endpoint — e.g. a 404 on `gpt-5.6-luna`). One
+    tiny completion tells us whether the model exists before we burn the full
+    retry budget on it. Only a 'model not found / removed' signal counts as
+    unavailable; any other error is treated as transient (the normal retry path
+    handles it) so we don't wrongly skip on a blip."""
+    from app.observability import audit
+
+    try:
+        provider.complete_json("Reply with a JSON object.", "ping", max_tokens=16)
+        return True
+    except Exception as e:  # noqa: BLE001
+        msg = str(e).lower()
+        unavailable = ("404" in msg or "not found" in msg or "does not exist" in msg
+                       or "unknown model" in msg or "no such model" in msg
+                       or "gone" in msg or "410" in msg)
+        if unavailable:
+            audit("MODEL_UNAVAILABLE", model=getattr(provider, "model", provider.name),
+                  error=str(e)[:200])
+            return False
+        return True  # transient/other error — not a model-availability problem
+
+
 def get_chat_provider() -> LlmProvider:
     """Provider used for chat answers. Defaults to the main provider/model but can
     be overridden with CHAT_PROVIDER / CHAT_MODEL (e.g. extract locally, chat on
